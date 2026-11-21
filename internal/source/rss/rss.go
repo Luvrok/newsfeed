@@ -47,6 +47,14 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 	limit := opts.Int("limit", 25)
 	withSummary := opts.Bool("summary", true)
 
+	var include *regexp.Regexp
+	if pattern := strings.TrimSpace(opts.String("include", "")); pattern != "" {
+		include, err = regexp.Compile(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("rss: include: %w", err)
+		}
+	}
+
 	client := httpx.Client(20*time.Second, "newsfeed/0.1 (+rss)", opts.String("proxy", ""))
 	var (
 		items []model.Item
@@ -60,7 +68,7 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 			continue
 		}
 		for _, it := range batch {
-			if seen[it.URL] {
+			if seen[it.URL] || (include != nil && !include.MatchString(it.URL)) {
 				continue
 			}
 			seen[it.URL] = true

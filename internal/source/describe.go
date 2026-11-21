@@ -46,6 +46,7 @@ var descriptors = []Descriptor{
 			{Key: "url", Label: "Feed URL", Type: FieldText, Required: true, Help: "https://example.com/feed.xml or http://127.0.0.1:1200/..."},
 			{Key: "limit", Label: "Items per poll", Type: FieldNumber, Default: 25},
 			{Key: "summary", Label: "Store summaries", Type: FieldBool, Default: true, Help: "Disable for feeds whose description is a list of related links."},
+			{Key: "include", Label: "Include URL regex", Type: FieldText, Help: "Optional; only items whose link matches are kept. Useful for news-only sections."},
 			{Key: "proxy", Label: "Network", Type: FieldSelect, Options: []string{"", "direct"}, Help: "direct bypasses the global proxy for this feed."},
 		},
 	},

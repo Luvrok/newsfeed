@@ -21,6 +21,8 @@ interval = "10m"
 [sources.options]
 url = "https://meduza.io/rss/all"
 limit = 25
+# news only, no podcasts, features or games
+include = '^https://meduza\\.io/news/'
 
 [[sources]]
 id = "tg-ateo"
