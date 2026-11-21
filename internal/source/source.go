@@ -65,6 +65,8 @@ func (o Options) Strings(key string) []string {
 // Int returns an integer option or the fallback.
 func (o Options) Int(key string, def int) int {
 	switch v := o[key].(type) {
+	case int:
+		return v
 	case int64:
 		return int(v)
 	case float64:

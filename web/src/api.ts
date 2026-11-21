@@ -114,3 +114,130 @@ export function refreshSource(id: string): Promise<{ triggered: number }> {
     method: 'POST',
   })
 }
+
+export type FieldType = 'text' | 'number' | 'bool' | 'select' | 'list' | 'secret'
+
+export interface KindField {
+  key: string
+  label: string
+  help?: string
+  type: FieldType
+  required?: boolean
+  default?: unknown
+  options?: string[]
+}
+
+export interface KindDescriptor {
+  kind: string
+  title: string
+  description: string
+  fields: KindField[]
+}
+
+export interface ManagedSource {
+  id: string
+  kind: string
+  label: string
+  group: string
+  site: string
+  interval_sec: number
+  enabled: boolean
+  origin: string
+  options: Record<string, unknown>
+  status: string
+  items: number
+  last_run_at?: string
+  last_ok_at?: string
+  last_error?: string
+  last_duration_ms?: number
+}
+
+export interface SourcePayload {
+  kind?: string
+  label?: string
+  group?: string
+  site?: string
+  interval_sec?: number
+  enabled?: boolean
+  options?: Record<string, unknown>
+}
+
+async function requestJSON<T>(url: string, method: string, body: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method,
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`
+    try {
+      const data = (await res.json()) as { error?: string }
+      if (data.error) message = data.error
+    } catch {
+      // keep status
+    }
+    throw new Error(message)
+  }
+  return (await res.json()) as T
+}
+
+export function getKinds(): Promise<{ kinds: KindDescriptor[] }> {
+  return request<{ kinds: KindDescriptor[] }>('/api/v1/kinds')
+}
+
+export function getManagedSources(): Promise<{ sources: ManagedSource[] }> {
+  return request<{ sources: ManagedSource[] }>('/api/v1/manage/sources')
+}
+
+export function createSource(payload: SourcePayload): Promise<{ source: ManagedSource }> {
+  return requestJSON<{ source: ManagedSource }>('/api/v1/sources', 'POST', payload)
+}
+
+export function updateSource(id: string, payload: SourcePayload): Promise<{ source: ManagedSource }> {
+  return requestJSON<{ source: ManagedSource }>(`/api/v1/sources/${encodeURIComponent(id)}`, 'PATCH', payload)
+}
+
+export async function deleteSource(id: string): Promise<void> {
+  const res = await fetch(`/api/v1/sources/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`
+    try {
+      const data = (await res.json()) as { error?: string }
+      if (data.error) message = data.error
+    } catch {
+      // keep status
+    }
+    throw new Error(message)
+  }
+}
+
+export function probeSource(kind: string, options: Record<string, unknown>): Promise<{
+  ok: boolean
+  count?: number
+  titles?: string[]
+  error?: string
+}> {
+  return requestJSON('/api/v1/sources/probe', 'POST', { kind, options })
+}
+
+export async function importOPML(file: File): Promise<{
+  added: number
+  skipped: number
+  failed: number
+  errors: string[]
+}> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch('/api/v1/import/opml', { method: 'POST', body: form })
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`
+    try {
+      const data = (await res.json()) as { error?: string }
+      if (data.error) message = data.error
+    } catch {
+      // keep status
+    }
+    throw new Error(message)
+  }
+  return (await res.json()) as { added: number; skipped: number; failed: number; errors: string[] }
+}

@@ -25,6 +25,8 @@ user_agent = "newsfeed/0.1 (+https://github.com/barnard/newsfeed)"
 # "http://127.0.0.1:8080". Empty means the process environment
 # (HTTP_PROXY / HTTPS_PROXY) or a direct connection, in that order.
 proxy = ""
+# Set true only when sources point at a local service such as RSSHub.
+allow_private_networks = false
 
 # ---------------------------------------------------------------------------
 # World news — RSS
@@ -334,9 +336,7 @@ limit = 30
 # Official feeds — government and platform APIs
 # ---------------------------------------------------------------------------
 
-# Reddit needs a free "script" app: reddit.com/prefs/apps. Put its id and
-# secret in REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET (or in the options) and
-# flip enabled to true. Official OAuth API, no scraping.
+# Public Reddit RSS through the global proxy. No OAuth app and no credentials.
 [[sources]]
 id = "reddit"
 kind = "reddit"
@@ -348,9 +348,7 @@ enabled = false
 [sources.options]
 subreddits = ["golang", "nixos", "worldnews"]
 sort = "hot"
-limit = 25
-# client_id = "..."
-# client_secret = "..."
+limit = 10
 
 [[sources]]
 id = "usgs-quakes"

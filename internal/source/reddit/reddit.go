@@ -1,22 +1,19 @@
-// Package reddit reads subreddits through the official OAuth API.
-//
-// Reddit removed anonymous JSON access for most clients, so this source needs
-// a free "script" app: https://www.reddit.com/prefs/apps. Put the id and
-// secret in REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET (or in the source
-// options) and the source will mint its own token.
+// Package reddit reads public Reddit RSS. It deliberately avoids OAuth: the
+// feed endpoint is free, has no app registration and works through the same
+// proxy as the rest of the fetchers. Reddit may rate limit bursts, so a source
+// with several subreddits spaces its requests.
 package reddit
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"html"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/mmcdole/gofeed"
 
 	"newsfeed/internal/content"
 	"newsfeed/internal/model"
@@ -28,28 +25,23 @@ func init() {
 	source.Register("reddit", func() source.Fetcher { return &fetcher{} })
 }
 
-type fetcher struct {
-	mu      sync.Mutex
-	token   string
-	expires time.Time
-}
+type fetcher struct{}
 
 // Options:
 //
-//	subreddits = ["golang", "nixos"]
+//	subreddits = ["worldnews", "geopolitics"]
 //	sort       = "hot"        # hot | new | top | rising
 //	time       = "day"        # for sort = "top": hour | day | week | month | year | all
-//	limit      = 25           # per subreddit, 1-100
-//	include_nsfw     = false
-//	include_stickied = false
-//	user_agent = "linux:newsfeed:0.1 (by /u/yourname)"
+//	limit      = 10           # per subreddit
+//	user_agent = "..."
+//	proxy      = ""          # per-source override; "direct" bypasses the global proxy
 func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item, error) {
-	clientID := first(opts.String("client_id", ""), os.Getenv("REDDIT_CLIENT_ID"))
-	clientSecret := first(opts.String("client_secret", ""), os.Getenv("REDDIT_CLIENT_SECRET"))
-	if clientID == "" || clientSecret == "" {
-		return nil, fmt.Errorf("reddit: REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET are required (create a free script app at reddit.com/prefs/apps)")
-	}
 	subs := opts.Strings("subreddits")
+	if len(subs) == 0 {
+		if sub := opts.String("subreddit", ""); sub != "" {
+			subs = []string{sub}
+		}
+	}
 	if len(subs) == 0 {
 		return nil, fmt.Errorf("reddit: options.subreddits is required")
 	}
@@ -59,89 +51,92 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 	default:
 		sortBy = "hot"
 	}
-	limit := opts.Int("limit", 25)
+	timeRange := opts.String("time", "day")
+	limit := opts.Int("limit", 10)
 	if limit < 1 || limit > 100 {
-		limit = 25
+		limit = 10
 	}
-	ua := opts.String("user_agent", "linux:newsfeed:0.1 (by /u/newsfeed)")
-	base := strings.TrimRight(opts.String("base_url", "https://oauth.reddit.com"), "/")
-	tokenURL := opts.String("token_url", "https://www.reddit.com/api/v1/access_token")
-	client := httpx.Client(20*time.Second, ua, opts.String("proxy", ""))
-
-	token, err := f.accessToken(ctx, client, tokenURL, clientID, clientSecret)
-	if err != nil {
-		return nil, err
-	}
+	base := strings.TrimRight(opts.String("base_url", "https://www.reddit.com"), "/")
+	ua := opts.String("user_agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36")
+	client := httpx.Client(25*time.Second, ua, opts.String("proxy", ""))
+	parser := gofeed.NewParser()
 
 	var (
 		out  []model.Item
 		errs []string
 	)
-	for _, sub := range subs {
-		endpoint := fmt.Sprintf("%s/r/%s/%s?limit=%d&raw_json=1", base, url.PathEscape(sub), sortBy, limit)
-		if sortBy == "top" {
-			endpoint += "&t=" + opts.String("time", "day")
+	for i, sub := range subs {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return out, ctx.Err()
+			case <-time.After(900 * time.Millisecond):
+			}
 		}
-		body, err := f.get(ctx, client, endpoint, token, ua)
+		link := redditURL(base, sub, sortBy, timeRange, limit)
+		body, _, err := httpx.Get(ctx, client, link, http.Header{
+			"Accept": {"application/atom+xml, application/rss+xml, application/xml, text/xml"},
+		})
 		if err != nil {
 			errs = append(errs, err.Error())
 			continue
 		}
-		var listing listingResponse
-		if err := json.Unmarshal(body, &listing); err != nil {
-			errs = append(errs, fmt.Sprintf("reddit/%s: decode: %v", sub, err))
+		feed, err := parser.ParseString(string(body))
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("reddit/%s: parse: %v", sub, err))
 			continue
 		}
-		for _, child := range listing.Data.Children {
-			post := child.Data
-			if post.ID == "" || post.Title == "" || post.Stickied || (post.Over18 && !opts.Bool("include_nsfw", false)) {
+		count := 0
+		for _, item := range feed.Items {
+			if item == nil || item.Title == "" || item.Link == "" {
 				continue
 			}
-			link := strings.TrimSpace(post.URL)
-			if post.IsSelf || link == "" {
-				link = "https://www.reddit.com" + post.Permalink
+			published := time.Now()
+			switch {
+			case item.PublishedParsed != nil:
+				published = *item.PublishedParsed
+			case item.UpdatedParsed != nil:
+				published = *item.UpdatedParsed
 			}
-			if link == "" {
-				continue
+			bodyHTML := content.SanitizeHTML(item.Description, item.Link)
+			if bodyHTML == "" {
+				bodyHTML = content.SanitizeHTML(item.Content, item.Link)
 			}
-			image := ""
-			if len(post.Preview.Images) > 0 {
-				image = htmlUnescape(post.Preview.Images[0].Source.URL)
-			}
-			if image == "" && strings.HasPrefix(post.Thumbnail, "http") {
-				image = htmlUnescape(post.Thumbnail)
-			}
-			summary := httpx.Truncate(httpx.Text(post.SelfText), 320)
-			bodyHTML := content.SanitizeHTML(post.SelfTextHTML, link)
 			bodyFormat := ""
 			if bodyHTML != "" {
 				bodyFormat = "html"
-			} else if summary == "" && strings.TrimSpace(post.SelfText) != "" {
-				bodyHTML = strings.TrimSpace(post.SelfText)
-				bodyFormat = "text"
 			}
-			tags := []string{"r/" + post.Subreddit}
-			if post.Score != 0 {
-				tags = append(tags, fmt.Sprintf("%d points", post.Score))
+			summary := httpx.Truncate(httpx.Text(item.Description+" "+item.Content), 320)
+			image := firstImage(item.Description + " " + item.Content)
+			author := ""
+			if item.Author != nil {
+				author = strings.TrimPrefix(strings.TrimSpace(item.Author.Name), "/u/")
+				if author != "" {
+					author = "u/" + author
+				}
 			}
-			if post.NumComments != 0 {
-				tags = append(tags, fmt.Sprintf("%d comments", post.NumComments))
-			}
-			if post.LinkFlairText != "" {
-				tags = append(tags, post.LinkFlairText)
+			tags := []string{"r/" + sub}
+			for _, category := range item.Categories {
+				if category != "" && len(tags) < 4 {
+					tags = append(tags, category)
+				}
 			}
 			out = append(out, model.Item{
-				ExternalID:    post.Name,
-				URL:           link,
-				Title:         post.Title,
+				ExternalID:    item.GUID,
+				URL:           item.Link,
+				Title:         item.Title,
 				Summary:       summary,
-				Author:        "u/" + post.Author,
+				Author:        author,
 				Image:         image,
 				Content:       bodyHTML,
 				ContentFormat: bodyFormat,
-				Published:     time.Unix(int64(post.CreatedUTC), 0),
+				Published:     published,
 				Tags:          tags,
 			})
+			count++
+			if count >= limit {
+				break
+			}
 		}
 	}
 	if len(out) == 0 && len(errs) > 0 {
@@ -150,110 +145,42 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 	return out, nil
 }
 
-func (f *fetcher) accessToken(ctx context.Context, client *http.Client, endpoint, id, secret string) (string, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.token != "" && time.Now().Before(f.expires) {
-		return f.token, nil
+func redditURL(base, sub, sortBy, timeRange string, limit int) string {
+	sub = strings.Trim(strings.TrimSpace(sub), "/")
+	sub = strings.TrimPrefix(sub, "r/")
+	sub = strings.TrimPrefix(sub, "@")
+	path := "/r/" + url.PathEscape(sub)
+	switch sortBy {
+	case "new", "rising":
+		path += "/" + sortBy
+	case "top":
+		path += "/top"
 	}
-	form := url.Values{"grant_type": {"client_credentials"}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", err
+	link := base + path + "/.rss?limit=" + fmt.Sprint(limit)
+	if sortBy == "top" {
+		link += "&t=" + url.QueryEscape(timeRange)
 	}
-	req.SetBasicAuth(id, secret)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("reddit: token: %w", err)
-	}
-	defer resp.Body.Close()
-	var body struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int    `json:"expires_in"`
-		Error       string `json:"error"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return "", fmt.Errorf("reddit: token: http %d: %w", resp.StatusCode, err)
-	}
-	if resp.StatusCode != http.StatusOK || body.AccessToken == "" {
-		msg := body.Error
-		if msg == "" {
-			msg = resp.Status
-		}
-		return "", fmt.Errorf("reddit: token: %s", msg)
-	}
-	ttl := body.ExpiresIn
-	if ttl <= 0 {
-		ttl = 3600
-	}
-	f.token = body.AccessToken
-	f.expires = time.Now().Add(time.Duration(ttl)*time.Second - time.Minute)
-	return f.token, nil
+	return link
 }
 
-func (f *fetcher) get(ctx context.Context, client *http.Client, endpoint, token, ua string) ([]byte, error) {
-	body, _, err := httpx.Get(ctx, client, endpoint, http.Header{
-		"Authorization": {"Bearer " + token},
-		"User-Agent":    {ua},
-	})
-	if err == nil {
-		return body, nil
+func firstImage(markup string) string {
+	idx := strings.Index(strings.ToLower(markup), "<img")
+	if idx < 0 {
+		return ""
 	}
-	if strings.Contains(err.Error(), "http 401") {
-		f.mu.Lock()
-		f.token = ""
-		f.expires = time.Time{}
-		f.mu.Unlock()
+	rest := markup[idx:]
+	start := strings.Index(rest, "src=\"")
+	if start < 0 {
+		start = strings.Index(rest, "src='")
 	}
-	return nil, err
-}
-
-func first(values ...string) string {
-	for _, v := range values {
-		if v = strings.TrimSpace(v); v != "" {
-			return v
-		}
+	if start < 0 {
+		return ""
 	}
-	return ""
-}
-
-func htmlUnescape(s string) string {
-	return html.UnescapeString(s)
-}
-
-type listingResponse struct {
-	Data struct {
-		Children []struct {
-			Kind string `json:"kind"`
-			Data post   `json:"data"`
-		} `json:"children"`
-	} `json:"data"`
-}
-
-type post struct {
-	ID            string  `json:"id"`
-	Name          string  `json:"name"`
-	Title         string  `json:"title"`
-	URL           string  `json:"url"`
-	Permalink     string  `json:"permalink"`
-	SelfText      string  `json:"selftext"`
-	SelfTextHTML  string  `json:"selftext_html"`
-	Author        string  `json:"author"`
-	Subreddit     string  `json:"subreddit"`
-	CreatedUTC    float64 `json:"created_utc"`
-	Score         int     `json:"score"`
-	NumComments   int     `json:"num_comments"`
-	Over18        bool    `json:"over_18"`
-	Stickied      bool    `json:"stickied"`
-	IsSelf        bool    `json:"is_self"`
-	Thumbnail     string  `json:"thumbnail"`
-	LinkFlairText string  `json:"link_flair_text"`
-	Preview       struct {
-		Images []struct {
-			Source struct {
-				URL string `json:"url"`
-			} `json:"source"`
-		} `json:"images"`
-	} `json:"preview"`
+	start += 5
+	quote := rest[start-1]
+	end := strings.IndexByte(rest[start:], quote)
+	if end < 0 {
+		return ""
+	}
+	return html.UnescapeString(strings.TrimSpace(rest[start : start+end]))
 }

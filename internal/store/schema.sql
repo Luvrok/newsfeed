@@ -1,10 +1,16 @@
 CREATE TABLE IF NOT EXISTS sources (
-    id         TEXT PRIMARY KEY,
-    kind       TEXT NOT NULL,
-    label      TEXT NOT NULL,
-    site_url   TEXT NOT NULL DEFAULT '',
-    grp        TEXT NOT NULL DEFAULT '',
-    updated_at INTEGER NOT NULL DEFAULT 0
+    id           TEXT PRIMARY KEY,
+    kind         TEXT NOT NULL,
+    label        TEXT NOT NULL,
+    site_url     TEXT NOT NULL DEFAULT '',
+    grp          TEXT NOT NULL DEFAULT '',
+    options      TEXT NOT NULL DEFAULT '{}',
+    interval_sec INTEGER NOT NULL DEFAULT 600,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    origin       TEXT NOT NULL DEFAULT 'ui',
+    created_at   INTEGER NOT NULL DEFAULT 0,
+    updated_at   INTEGER NOT NULL DEFAULT 0,
+    deleted_at   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS items (

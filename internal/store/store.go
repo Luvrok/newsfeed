@@ -72,6 +72,26 @@ func Open(path string) (*Store, error) {
 // migrate adds columns introduced after the first schema version. New
 // databases get everything from schema.sql.
 func (s *Store) migrate(ctx context.Context) error {
+	sourceCols, err := s.columns(ctx, "sources")
+	if err != nil {
+		return err
+	}
+	for _, col := range []struct{ name, ddl string }{
+		{"options", `ALTER TABLE sources ADD COLUMN options TEXT NOT NULL DEFAULT '{}'`},
+		{"interval_sec", `ALTER TABLE sources ADD COLUMN interval_sec INTEGER NOT NULL DEFAULT 600`},
+		{"enabled", `ALTER TABLE sources ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1`},
+		{"origin", `ALTER TABLE sources ADD COLUMN origin TEXT NOT NULL DEFAULT 'ui'`},
+		{"created_at", `ALTER TABLE sources ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0`},
+		{"deleted_at", `ALTER TABLE sources ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0`},
+	} {
+		if sourceCols[col.name] {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, col.ddl); err != nil {
+			return err
+		}
+	}
+
 	cols, err := s.columns(ctx, "items")
 	if err != nil {
 		return err
@@ -166,7 +186,13 @@ func (s *Store) Close() error { return s.db.Close() }
 
 // SyncSources makes the config file the source of truth: unknown sources are
 // removed together with their items, configured ones are upserted.
-func (s *Store) SyncSources(ctx context.Context, sources []model.Source) error {
+// SeedSources inserts the config list on first run and backfills legacy rows
+// that have no options yet. It never deletes and never overwrites a source the
+// UI has already edited; after seeding, the database is the source of truth.
+func (s *Store) SeedSources(ctx context.Context, sources []model.Source) error {
+	if len(sources) == 0 {
+		return nil
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -177,14 +203,20 @@ func (s *Store) SyncSources(ctx context.Context, sources []model.Source) error {
 
 	now := time.Now().Unix()
 	upsert, err := tx.PrepareContext(ctx, `
-		INSERT INTO sources (id, kind, label, site_url, grp, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO sources
+			(id, kind, label, site_url, grp, options, interval_sec, enabled, origin, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'config', ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			kind = excluded.kind,
 			label = excluded.label,
 			site_url = excluded.site_url,
 			grp = excluded.grp,
-			updated_at = excluded.updated_at`)
+			options = excluded.options,
+			interval_sec = excluded.interval_sec,
+			enabled = excluded.enabled,
+			origin = 'config',
+			updated_at = excluded.updated_at
+		WHERE (sources.options = '' OR sources.options = '{}') AND sources.deleted_at = 0`)
 	if err != nil {
 		return err
 	}
@@ -196,30 +228,173 @@ func (s *Store) SyncSources(ctx context.Context, sources []model.Source) error {
 	}
 	defer state.Close()
 
-	ids := make([]string, 0, len(sources))
-	args := make([]any, 0, len(sources))
 	for _, src := range sources {
-		if _, err := upsert.ExecContext(ctx, src.ID, src.Kind, src.Label, src.SiteURL, src.Group, now); err != nil {
-			return fmt.Errorf("upsert source %s: %w", src.ID, err)
+		opts, _ := json.Marshal(src.Options)
+		if len(src.Options) == 0 {
+			opts = []byte(`{}`)
+		}
+		interval := int(src.Interval.Seconds())
+		if interval <= 0 {
+			interval = 600
+		}
+		if _, err := upsert.ExecContext(ctx,
+			src.ID, src.Kind, src.Label, src.SiteURL, src.Group, string(opts), interval, boolInt(src.Enabled), now, now,
+		); err != nil {
+			return fmt.Errorf("seed source %s: %w", src.ID, err)
 		}
 		if _, err := state.ExecContext(ctx, src.ID); err != nil {
 			return fmt.Errorf("init source state %s: %w", src.ID, err)
 		}
-		ids = append(ids, src.ID)
-		args = append(args, src.ID)
-	}
-
-	if len(ids) == 0 {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM sources`); err != nil {
-			return err
-		}
-	} else {
-		placeholders := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
-		if _, err := tx.ExecContext(ctx, `DELETE FROM sources WHERE id NOT IN (`+placeholders+`)`, args...); err != nil {
-			return err
-		}
 	}
 	return tx.Commit()
+}
+
+// CountSources reports active subscriptions.
+func (s *Store) CountSources(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sources WHERE deleted_at = 0 AND enabled = 1`).Scan(&n)
+	return n, err
+}
+
+// ListSources loads every active subscription, or all rows including soft
+// deleted ones for the management screen.
+func (s *Store) ListSources(ctx context.Context, includeDeleted bool) ([]model.Source, error) {
+	query := `SELECT id, kind, label, site_url, grp, options, interval_sec, enabled, origin, deleted_at FROM sources`
+	if !includeDeleted {
+		query += ` WHERE deleted_at = 0`
+	}
+	query += ` ORDER BY grp, label`
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]model.Source, 0, 32)
+	for rows.Next() {
+		src, err := scanSource(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, src)
+	}
+	return out, rows.Err()
+}
+
+// SourceByID loads one subscription.
+func (s *Store) SourceByID(ctx context.Context, id string) (model.Source, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, kind, label, site_url, grp, options, interval_sec, enabled, origin, deleted_at
+		FROM sources WHERE id = ? AND deleted_at = 0`, id)
+	return scanSource(row)
+}
+
+// CreateSource stores a UI or imported subscription.
+func (s *Store) CreateSource(ctx context.Context, src model.Source) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	now := time.Now().Unix()
+	if src.Origin == "" {
+		src.Origin = "ui"
+	}
+	opts, _ := json.Marshal(src.Options)
+	if len(src.Options) == 0 {
+		opts = []byte(`{}`)
+	}
+	interval := int(src.Interval.Seconds())
+	if interval <= 0 {
+		interval = 600
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO sources
+			(id, kind, label, site_url, grp, options, interval_sec, enabled, origin, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		src.ID, src.Kind, src.Label, src.SiteURL, src.Group, string(opts), interval, boolInt(src.Enabled), src.Origin, now, now,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO source_state (source_id) VALUES (?) ON CONFLICT DO NOTHING`, src.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// UpdateSource edits a subscription. The ID and origin stay unchanged.
+func (s *Store) UpdateSource(ctx context.Context, src model.Source) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	opts, _ := json.Marshal(src.Options)
+	interval := int(src.Interval.Seconds())
+	if interval <= 0 {
+		interval = 600
+	}
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE sources
+		SET kind = ?, label = ?, site_url = ?, grp = ?, options = ?, interval_sec = ?,
+		    enabled = ?, updated_at = ?
+		WHERE id = ? AND deleted_at = 0`,
+		src.Kind, src.Label, src.SiteURL, src.Group, string(opts), interval,
+		boolInt(src.Enabled), time.Now().Unix(), src.ID,
+	)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO source_state (source_id) VALUES (?) ON CONFLICT DO NOTHING`, src.ID)
+	return err
+}
+
+// SoftDeleteSource stops a subscription but keeps its items so bookmarks and
+// story links still resolve. A hard purge is deliberately not exposed.
+func (s *Store) SoftDeleteSource(ctx context.Context, id string) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	now := time.Now().Unix()
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE sources SET enabled = 0, deleted_at = ?, updated_at = ?
+		WHERE id = ? AND deleted_at = 0`, now, now, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func scanSource(row interface{ Scan(...any) error }) (model.Source, error) {
+	var (
+		src      model.Source
+		options  string
+		interval int
+		enabled  int
+	)
+	if err := row.Scan(&src.ID, &src.Kind, &src.Label, &src.SiteURL, &src.Group,
+		&options, &interval, &enabled, &src.Origin, &src.DeletedAt); err != nil {
+		return src, err
+	}
+	src.Interval = time.Duration(interval) * time.Second
+	src.Enabled = enabled != 0
+	if options != "" {
+		_ = json.Unmarshal([]byte(options), &src.Options)
+	}
+	if src.Options == nil {
+		src.Options = map[string]any{}
+	}
+	return src, nil
+}
+
+func boolInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 // InsertItems stores a fetched batch and reports how many rows were new.
@@ -336,10 +511,8 @@ func (s *Store) Feed(ctx context.Context, q model.FeedQuery) ([]model.FeedItem, 
 	if limit <= 0 || limit > 200 {
 		limit = 40
 	}
-	var (
-		where []string
-		args  []any
-	)
+	where := []string{`s.deleted_at = 0`}
+	var args []any
 	if q.Before != nil {
 		where = append(where, `(i.published_at < ? OR (i.published_at = ? AND i.id < ?))`)
 		args = append(args, q.Before.PublishedAt, q.Before.PublishedAt, q.Before.ID)
@@ -479,14 +652,16 @@ type Stats struct {
 // Stats aggregates counts and source health in one round trip.
 func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	var out Stats
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM items`).Scan(&out.ItemsTotal); err != nil {
+	active := ` FROM items i JOIN sources s ON s.id = i.source_id WHERE s.deleted_at = 0`
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*)`+active).Scan(&out.ItemsTotal); err != nil {
 		return out, err
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM items WHERE published_at >= ?`, time.Now().Add(-24*time.Hour).Unix()).Scan(&out.Items24h); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*)`+active+` AND i.published_at >= ?`,
+		time.Now().Add(-24*time.Hour).Unix()).Scan(&out.Items24h); err != nil {
 		return out, err
 	}
 	var last int64
-	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(published_at), 0) FROM items`).Scan(&last); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(i.published_at), 0)`+active).Scan(&last); err != nil {
 		return out, err
 	}
 	if last > 0 {
@@ -496,7 +671,8 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	buckets := map[int64]int64{}
 	hourStart := time.Now().UTC().Truncate(time.Hour).Add(-23 * time.Hour)
 	activityRows, err := s.db.QueryContext(ctx,
-		`SELECT (published_at / 3600) * 3600 AS b, COUNT(*) FROM items WHERE published_at >= ? GROUP BY b`,
+		`SELECT (i.published_at / 3600) * 3600 AS b, COUNT(*) FROM items i JOIN sources s ON s.id = i.source_id
+		 WHERE s.deleted_at = 0 AND i.published_at >= ? GROUP BY b`,
 		hourStart.Unix())
 	if err != nil {
 		return out, err
@@ -516,13 +692,14 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT s.id, s.kind, s.label, s.grp, s.site_url,
+		SELECT s.id, s.kind, s.label, s.grp, s.site_url, s.interval_sec,
 		       COALESCE(st.last_run_at, 0), COALESCE(st.last_ok_at, 0), COALESCE(st.last_error, ''),
 		       COALESCE(st.last_duration_ms, 0), COALESCE(st.last_new, 0),
 		       COALESCE(st.total_runs, 0), COALESCE(st.total_errors, 0),
 		       (SELECT COUNT(*) FROM items i WHERE i.source_id = s.id)
 		FROM sources s
 		LEFT JOIN source_state st ON st.source_id = s.id
+		WHERE s.deleted_at = 0 AND s.enabled = 1
 		ORDER BY s.grp, s.label`)
 	if err != nil {
 		return out, err
@@ -534,7 +711,7 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 			lastRun int64
 			lastOK  int64
 		)
-		if err := rows.Scan(&st.ID, &st.Kind, &st.Label, &st.Group, &st.SiteURL,
+		if err := rows.Scan(&st.ID, &st.Kind, &st.Label, &st.Group, &st.SiteURL, &st.IntervalSec,
 			&lastRun, &lastOK, &st.LastError, &st.LastDurationMS, &st.LastNew,
 			&st.Runs, &st.Errors, &st.Items); err != nil {
 			return out, err

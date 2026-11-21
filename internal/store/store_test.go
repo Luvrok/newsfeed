@@ -17,7 +17,7 @@ func testStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	ctx := context.Background()
-	if err := st.SyncSources(ctx, []model.Source{
+	if err := st.SeedSources(ctx, []model.Source{
 		{ID: "a", Kind: "rss", Label: "A", Group: "test", Interval: time.Minute},
 		{ID: "b", Kind: "rss", Label: "B", Group: "test", Interval: time.Minute},
 	}); err != nil {

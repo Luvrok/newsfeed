@@ -28,7 +28,10 @@ func Client(timeout time.Duration, userAgent, proxy string) *http.Client {
 		timeout = 30 * time.Second
 	}
 	proxyFunc := http.ProxyFromEnvironment
-	if proxy = strings.TrimSpace(proxy); proxy != "" {
+	switch proxy = strings.TrimSpace(proxy); {
+	case strings.EqualFold(proxy, "direct"):
+		proxyFunc = nil
+	case proxy != "":
 		parsed, err := url.Parse(proxy)
 		if err != nil {
 			proxyFunc = func(*http.Request) (*url.URL, error) {
@@ -39,7 +42,7 @@ func Client(timeout time.Duration, userAgent, proxy string) *http.Client {
 		}
 	}
 	transport := &http.Transport{
-		Proxy:                 proxyFunc,
+		Proxy:                 noProxyLoopback(proxyFunc),
 		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 		MaxIdleConns:          64,
 		MaxIdleConnsPerHost:   8,
@@ -234,4 +237,22 @@ func FirstLine(s string, n int) string {
 		}
 	}
 	return ""
+}
+
+// noProxyLoopback keeps a local RSSHub or another on-box service out of the
+// outbound tunnel, matching the old Miniflux NO_PROXY setup.
+func noProxyLoopback(next func(*http.Request) (*url.URL, error)) func(*http.Request) (*url.URL, error) {
+	return func(req *http.Request) (*url.URL, error) {
+		host := req.URL.Hostname()
+		if strings.EqualFold(host, "localhost") {
+			return nil, nil
+		}
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			return nil, nil
+		}
+		if next == nil {
+			return nil, nil
+		}
+		return next(req)
+	}
 }

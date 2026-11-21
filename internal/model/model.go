@@ -18,14 +18,19 @@ type Item struct {
 	Tags          []string
 }
 
-// Source is a subscription declared in the config file.
+// Source is one subscription instance. Config seeds it once; after that the
+// database is the source of truth and the web UI can edit it.
 type Source struct {
-	ID       string
-	Kind     string
-	Label    string
-	SiteURL  string
-	Group    string
-	Interval time.Duration
+	ID        string
+	Kind      string
+	Label     string
+	SiteURL   string
+	Group     string
+	Interval  time.Duration
+	Options   map[string]any
+	Enabled   bool
+	Origin    string
+	DeletedAt int64
 }
 
 // FeedItem is an item enriched with its source, ready for the API.

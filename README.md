@@ -11,7 +11,10 @@ sources (one goroutine each)  ->  SQLite  ->  /api/v1/feed  ->  React reader
 
 ## Features
 
-- **Config-driven subscriptions.** Add or remove a source by editing one TOML block.
+- **Subscriptions in the database.** Add, edit, pause and delete sources from the web UI.
+  The TOML file is a first-run seed and global settings, not the runtime truth.
+- **Hot source lifecycle.** A new source gets its own goroutine, interval, jitter and
+  backoff immediately; no restart and no config edit. The database is the source of truth.
 - **One goroutine per source**, its own interval, jitter and exponential backoff on errors.
 - **Modular fetchers.** Each source kind is a small package behind a shared interface;
   a new kind is ~100 lines and one import line.
@@ -48,6 +51,9 @@ go run ./cmd/newsd fetch
 go run ./cmd/newsd serve
 ```
 
+Open `/manage` to add an RSS feed, a Telegram channel or a subreddit. The scheduler starts
+it on save; the TOML seed is only the starting catalogue.
+
 During development run the API and Vite separately; Vite proxies `/api` to the backend:
 
 ```bash
@@ -67,7 +73,39 @@ make test      # store tests: URL canonicalization, dedupe, keyset pagination
 `newsd fetch [source-id]` is also useful from cron or a systemd timer if you would rather
 not keep the scheduler running.
 
-### Run as a service
+### NixOS
+
+The repository is a flake. It builds the Go binary, the Vite bundle and a NixOS module:
+
+```bash
+nix build .#              # bin/newsd + share/dispatch/web
+nix develop               # go, node, gopls, nixfmt
+```
+
+```nix
+# flake.nix of the host
+inputs.dispatch.url = "github:Luvrok/newsfeed";
+inputs.dispatch.inputs.nixpkgs.follows = "nixpkgs";
+
+# somewhere in the host modules
+imports = [ inputs.dispatch.nixosModules.default ];
+services.dispatch = {
+  enable = true;
+  port = 8180;
+  settings = {
+    fetch.proxy = "http://127.0.0.1:10808";
+    fetch.allow_private_networks = true; # RSSHub on 127.0.0.1:1200
+  };
+};
+```
+
+The module creates the `dispatch` user and `/var/lib/dispatch`, sets `StateDirectory`, a
+hardened systemd unit and a generated TOML with `web_dir` pointing at the Nix package.
+It deliberately does not expose the service: put nginx or a VPN in front, because the UI
+can add and edit sources. The old Miniflux port `8180` maps onto the same xray tunnel and
+nginx vhost, so the public URL can stay `rss.vxrnt.ru`; only the upstream app changes.
+
+### Run as a service without Nix
 
 [`deploy/newsd.service`](deploy/newsd.service) is a minimal systemd unit. Copy the project to
 `/opt/dispatch`, build with `make build`, create a `dispatch` user that owns `data/`, adjust
@@ -80,14 +118,38 @@ sudo cp deploy/newsd.service /etc/systemd/system/
 sudo systemctl enable --now newsd
 ```
 
-Keep the service on `127.0.0.1` or put it behind a reverse proxy. The API has no
-authentication by design.
+Keep the service on `127.0.0.1` and put authentication in front. The app has no login of
+its own; the management API can create sources, so an open port is not safe.
+
+## Managing sources
+
+Open `/manage` (or click the live chip and **Manage sources**). The page has the same
+source health as the drawer plus the controls:
+
+- **Add source** picks a kind and renders its form from the server-side descriptor
+  (`GET /api/v1/kinds`): RSS URL, Telegram channels, subreddits, Mastodon tags, and so on.
+- **Test source** fetches a few items without saving and shows the titles or the error.
+- **Edit** changes the label, group, interval and options. A changed interval or option
+  restarts that source only; the other goroutines are untouched.
+- **Pause** stops polling but keeps the stored stories and bookmarks readable.
+- **Delete** is a soft delete: polling stops, items remain reachable by story id and saved
+  bookmarks, and the source disappears from the feed and the status drawer.
+- **Import OPML** imports a Miniflux (or any reader) export. Categories become groups,
+  duplicates are skipped, and every feed is added as an RSS source. A clean migration from
+  Miniflux without touching the old database.
+
+A **kind** is code (an RSS parser, a Telegram preview reader); an **instance** is one
+subscription. The UI adds instances of existing kinds. A new kind still needs a package, a
+descriptor and a flake rebuild.
 
 ## Configuration
 
-Everything lives in [`config/newsfeed.toml`](config/newsfeed.toml). The service treats the
-file as the source of truth: a source removed from the file is removed from the database
-together with its items.
+[`config/newsfeed.toml`](config/newsfeed.toml) holds global settings and a first-run seed.
+After the first start, the SQLite `sources` table is the runtime source of truth: editing
+or deleting a source in `/manage` survives restarts. The seed only inserts missing rows and
+backfills legacy rows that have no options yet; it never deletes and never overwrites a
+source edited in the UI. Source instances live in the database, so the TOML list can be
+emptied after the import.
 
 ```toml
 [server]
@@ -106,6 +168,7 @@ max_items = 300            # hard cap per source per poll
 retention_days = 30        # older items are pruned every six hours
 user_agent = "newsfeed/0.1 (+https://github.com/barnard/newsfeed)"
 proxy = ""                 # "socks5://127.0.0.1:1080"; NEWSFEED_PROXY also works
+allow_private_networks = false  # true only for a local RSSHub or LAN feed
 
 [[sources]]
 id = "bbc-world"           # stable key, used by filters and state
@@ -131,14 +194,17 @@ limit = 25
 | `mastodon` | `instance`, `tag` (a hashtag or `local`), `limit` | Public instance API, no token. |
 | `usgs` | `feed` (`significant`/`4.5`/`2.5`/`1.0`/`all`), `period` (`hour`/`day`/`week`), `limit` | Official GeoJSON. |
 | `github` | `repos`, `limit`, `prerelease = false` | Public releases API, unauthenticated (60 requests/hour per IP). |
-| `reddit` | `subreddits`, `sort`, `time`, `limit`, `include_nsfw`, `include_stickied` | Official OAuth API. Needs `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET`; shipped disabled. |
+| `reddit` | `subreddits`, `sort`, `time`, `limit` | Public Reddit RSS through the global proxy. No OAuth app, no credentials; Reddit may answer 429 on bursts. |
 | `gdelt` | `query`, `timespan`, `max`, `language` | Free article index, but rate-limited to one request per five seconds; shipped disabled. |
 
 Any source can override the global proxy with `proxy` in its `[sources.options]`. This is
 the usual setup for Telegram in Russia: tunnel only Telegram, keep everything else direct.
-`proxy` accepts `http://`, `https://` and `socks5://` URLs. Empty means `NEWSFEED_PROXY`,
-then `HTTP_PROXY` / `HTTPS_PROXY`, then a direct connection. The image proxy follows the
-global proxy, or the first per-source proxy when only one source is tunneled.
+`proxy` accepts `http://`, `https://` and `socks5://` URLs; `direct` bypasses the global
+proxy. Empty means `NEWSFEED_PROXY`, then `HTTP_PROXY` / `HTTPS_PROXY`, then a direct
+connection. Loopback targets (a local RSSHub) always bypass the proxy. The image proxy
+follows the global proxy, or the first per-source proxy when only one source is tunneled.
+For RSSHub routes set `allow_private_networks = true` in `[fetch]`; leave it off when every
+feed is public, because it also disables the SSRF guard for UI-added URLs.
 
 Defaults are deliberately conservative: feeds are polled every 10–30 minutes, fast wires
 (Hacker News, USGS, Telegram) every 5 minutes. Every poll runs in parallel with an
@@ -188,14 +254,21 @@ GET  /api/v1/sources          # totals, activity buckets, per-source health
 GET  /api/v1/items?ids=1,2,3  # restore bookmarks / specific stories by id
 GET  /api/v1/story/{id}       # full story: stored article body, image and metadata
 GET  /api/v1/image?u=…&w=640  # cached image proxy with server-side resize
+GET  /api/v1/kinds            # source descriptors for the management form
+GET  /api/v1/manage/sources   # all instances, options and state
+POST /api/v1/sources          # add an instance
+PATCH/DELETE /api/v1/sources/{id}
+POST /api/v1/sources/probe    # dry fetch for the "Test source" button
+POST /api/v1/import/opml      # multipart OPML import
 GET  /api/v1/health           # liveness and version
 POST /api/v1/refresh          # ask every source to poll now; 10 s client cooldown
 POST /api/v1/sources/{id}/refresh
 ```
 
-## Adding a source
+## Adding a source kind
 
-A source kind is a package that registers a factory. The shared contract lives in
+Instances are created in `/manage`; a new **kind** is code. A source kind is a package that
+registers a factory and a descriptor. The shared contract lives in
 [`internal/source/source.go`](internal/source/source.go):
 
 ```go
@@ -247,15 +320,21 @@ interval = "10m"
 endpoint = "https://example.com/api"
 ```
 
-Nothing else changes. The scheduler, store, dedupe, API and UI discover it from the config.
-Options are a `map[string]any` with string, int and bool helpers, so a fetcher only reads
-the keys it needs; unknown keys are ignored.
+Register a descriptor for the UI as well, either in the kind package or in
+`internal/source/describe.go`. It lists the fields, types, defaults and help text; the
+web form is generated from `GET /api/v1/kinds`, so a new kind does not need React changes.
+
+Nothing else changes. The scheduler, store, dedupe, API and UI discover the kind from the
+registry. Options are a `map[string]any` with string, int and bool helpers, so a fetcher
+only reads the keys it needs; unknown keys are ignored.
 
 ## Layout
 
 ```
 cmd/newsd/            CLI: serve, fetch, sources, version
-internal/api/         JSON API, CORS, image proxy, static SPA serving
+flake.nix             package, devShell, formatter, NixOS module
+nix/module.nix        services.dispatch
+internal/api/         JSON API, CORS, image proxy, static SPA serving, source CRUD
 internal/config/      TOML loading and defaults
 internal/content/     HTML sanitizer, article bodies, image proxy URLs
 internal/ingest/      scheduler, per-source goroutines, batch mode
@@ -294,10 +373,19 @@ is a keyset cursor, not an offset.
 - **Telegram** uses the public web preview. Channels without a preview, private channels and
   channels that restrict embedding will return nothing. Point `proxy` at a tunnel if
   `t.me` is blocked on your network; the same client fetches channel images.
-- **Reddit** uses the official OAuth API. Create a free "script" app at
-  <https://www.reddit.com/prefs/apps>, export `REDDIT_CLIENT_ID` and
-  `REDDIT_CLIENT_SECRET`, then set `enabled = true` on the `reddit` source. The source is
-  shipped disabled so a fresh install never fails on missing credentials.
+- **Reddit** uses its public RSS through the proxy, so there is no OAuth app to create.
+  Add a subreddit from `/manage`, or import the `.rss` URLs from Miniflux. Reddit can
+  answer 429; keep the interval at 15 minutes or higher and use the proxy.
+- **RSSHub** is an optional external service, not part of this binary. Add its routes as
+  ordinary RSS sources and set `fetch.allow_private_networks = true`; loopback requests
+  bypass the global proxy automatically. Keep RSSHub for YouTube and sites without a
+  native feed; Telegram and Reddit have native sources.
+- **OPML migration**: export subscriptions from Miniflux, import the file in `/manage`.
+  Only subscriptions and categories are imported; old entries and read state stay in
+  Miniflux. The old `feeds` list in `miniflux.nix` is not needed after the import.
+- **Authentication is not built in.** Bind the service to `127.0.0.1` and put nginx basic
+  auth, Authelia or a VPN (Tailscale/WireGuard) in front. The source-management API can
+  start arbitrary fetches, so do not expose it openly.
 - **Reuters** has no free official feed any more. The shipped source uses a Google News
   RSS search restricted to `site:reuters.com`; the link opens the original article.
 - **GDELT** is shipped disabled: its API allows roughly one request per five seconds and
@@ -327,4 +415,5 @@ Screenshots:
 [`article-light.png`](docs/screenshots/article-light.png),
 [`article-telegram.png`](docs/screenshots/article-telegram.png),
 [`article-mobile.png`](docs/screenshots/article-mobile.png),
+[`manage-light.png`](docs/screenshots/manage-light.png),
 [`status.png`](docs/screenshots/status.png).

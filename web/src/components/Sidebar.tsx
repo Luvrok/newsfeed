@@ -16,6 +16,7 @@ interface SidebarProps {
   lastUpdated: Date | null
   onNavigate?: () => void
   onStatus: () => void
+  onManage: () => void
 }
 
 export function Sidebar({
@@ -30,6 +31,7 @@ export function Sidebar({
   lastUpdated,
   onNavigate,
   onStatus,
+  onManage,
 }: SidebarProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 
@@ -187,6 +189,15 @@ export function Sidebar({
             </span>
           ))}
         </div>
+        <button
+          className="side-manage"
+          onClick={() => {
+            onManage()
+            onNavigate?.()
+          }}
+        >
+          + manage sources
+        </button>
       </div>
     </nav>
   )

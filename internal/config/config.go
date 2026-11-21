@@ -44,7 +44,8 @@ type Server struct {
 }
 
 type Database struct {
-	Path string `toml:"path"`
+	Path     string `toml:"path"`
+	SeedFile string `toml:"seed_file"`
 }
 
 type Fetch struct {
@@ -54,6 +55,7 @@ type Fetch struct {
 	Workers       int      `toml:"workers"`
 	UserAgent     string   `toml:"user_agent"`
 	Proxy         string   `toml:"proxy"`
+	AllowPrivate  bool     `toml:"allow_private_networks"`
 }
 
 // Source is one subscription.
@@ -104,6 +106,9 @@ func (c *Config) normalize() error {
 	}
 	if c.Server.ImageCache == "" {
 		c.Server.ImageCache = "data/images"
+	}
+	if webDir := strings.TrimSpace(os.Getenv("DISPATCH_WEB_DIR")); webDir != "" {
+		c.Server.WebDir = webDir
 	}
 	if c.Database.Path == "" {
 		c.Database.Path = "data/newsfeed.db"

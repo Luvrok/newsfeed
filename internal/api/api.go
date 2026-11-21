@@ -29,7 +29,7 @@ import (
 type Server struct {
 	cfg     *config.Config
 	store   *store.Store
-	sched   *ingest.Scheduler
+	mgr     *ingest.Manager
 	log     *slog.Logger
 	version string
 	started time.Time
@@ -42,7 +42,7 @@ type Server struct {
 }
 
 // New builds the HTTP layer.
-func New(cfg *config.Config, st *store.Store, sched *ingest.Scheduler, log *slog.Logger, version string) *Server {
+func New(cfg *config.Config, st *store.Store, mgr *ingest.Manager, log *slog.Logger, version string) *Server {
 	imageProxy := cfg.Fetch.Proxy
 	if imageProxy == "" {
 		// A Telegram-only tunnel is a common setup; images should follow the
@@ -60,7 +60,7 @@ func New(cfg *config.Config, st *store.Store, sched *ingest.Scheduler, log *slog
 	s := &Server{
 		cfg:         cfg,
 		store:       st,
-		sched:       sched,
+		mgr:         mgr,
 		log:         log,
 		version:     version,
 		started:     time.Now(),
@@ -88,6 +88,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/refresh", s.handleRefresh)
 	mux.HandleFunc("POST /api/v1/sources/{id}/refresh", s.handleRefreshOne)
 	mux.HandleFunc("GET /api/v1/health", s.handleHealth)
+	mux.HandleFunc("GET /api/v1/kinds", s.handleKinds)
+	mux.HandleFunc("GET /api/v1/manage/sources", s.handleManagedSources)
+	mux.HandleFunc("POST /api/v1/sources", s.handleCreateSource)
+	mux.HandleFunc("PATCH /api/v1/sources/{id}", s.handleUpdateSource)
+	mux.HandleFunc("DELETE /api/v1/sources/{id}", s.handleDeleteSource)
+	mux.HandleFunc("POST /api/v1/sources/probe", s.handleProbe)
+	mux.HandleFunc("POST /api/v1/import/opml", s.handleImportOPML)
 	mux.HandleFunc("/api", handleAPINotFound)
 	mux.HandleFunc("/api/", handleAPINotFound)
 
@@ -248,22 +255,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	for i := range stats.Sources {
 		src := &stats.Sources[i]
-		for _, sc := range s.cfg.Sources {
-			if sc.ID == src.ID {
-				src.IntervalSec = int(sc.Interval.Std().Seconds())
-				break
-			}
-		}
-		status := "ok"
-		switch {
-		case src.LastRunAt.IsZero():
-			status = "never"
-		case src.LastError != "":
-			status = "error"
-		case src.IntervalSec > 0 && now.Sub(src.LastOKAt) > 3*time.Duration(src.IntervalSec)*time.Second:
-			status = "stale"
-		}
-		src.Status = status
+		src.Status = sourceStatus(*src, now)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items_total":  stats.ItemsTotal,
@@ -285,13 +277,13 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.lastRefresh.Store(now)
-	n := s.sched.Trigger()
+	n := s.mgr.TriggerAll()
 	writeJSON(w, http.StatusAccepted, map[string]any{"triggered": n})
 }
 
 func (s *Server) handleRefreshOne(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !s.sched.TriggerOne(id) {
+	if !s.mgr.TriggerOne(id) {
 		writeError(w, http.StatusConflict, "source is unknown or already fetching")
 		return
 	}
@@ -303,11 +295,11 @@ func handleAPINotFound(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	enabled := 0
-	for _, sc := range s.cfg.Sources {
-		if sc.IsEnabled() {
-			enabled++
-		}
+	enabled, err := s.store.CountSources(r.Context())
+	if err != nil {
+		s.log.Error("health", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not count sources")
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":  "ok",
@@ -414,4 +406,17 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+func sourceStatus(st model.SourceStats, now time.Time) string {
+	switch {
+	case st.LastRunAt.IsZero():
+		return "never"
+	case st.LastError != "":
+		return "error"
+	case st.IntervalSec > 0 && now.Sub(st.LastOKAt) > 3*time.Duration(st.IntervalSec)*time.Second:
+		return "stale"
+	default:
+		return "ok"
+	}
 }

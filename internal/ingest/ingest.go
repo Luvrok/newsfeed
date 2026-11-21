@@ -1,87 +1,266 @@
-// Package ingest schedules source fetchers and writes their results to the store.
+// Package ingest owns the running subscriptions. The database is the source
+// of truth; the manager starts, restarts and stops one goroutine per source
+// while the service is alive.
 package ingest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"reflect"
 	"sync"
 	"time"
 
 	"newsfeed/internal/config"
+	"newsfeed/internal/model"
 	"newsfeed/internal/source"
 	"newsfeed/internal/store"
 )
 
-// Job is one configured subscription bound to its fetcher.
+// Job is one running subscription.
 type Job struct {
-	Config  config.Source
+	Source  model.Source
 	fetcher source.Fetcher
 	trig    chan struct{}
+	cancel  context.CancelFunc
+	done    chan struct{}
 }
 
-// NewJobs validates the config and builds every fetcher. An unknown kind is a
-// startup error, so a typo in the config never fails silently at 3 am.
-func NewJobs(cfg *config.Config) ([]*Job, error) {
-	jobs := make([]*Job, 0, len(cfg.Sources))
-	for _, sc := range cfg.Sources {
-		if !sc.IsEnabled() {
-			continue
-		}
-		if cfg.Fetch.Proxy != "" && sc.Options["proxy"] == nil {
-			sc.Options["proxy"] = cfg.Fetch.Proxy
-		}
-		f, err := source.New(sc.Kind)
-		if err != nil {
-			return nil, fmt.Errorf("source %q: %w", sc.ID, err)
-		}
-		jobs = append(jobs, &Job{Config: sc, fetcher: f, trig: make(chan struct{}, 1)})
-	}
-	if len(jobs) == 0 {
-		return nil, fmt.Errorf("no enabled sources in %s", cfg.Path)
-	}
-	return jobs, nil
-}
-
-// Scheduler runs one goroutine per source.
-type Scheduler struct {
+// Manager keeps the job map and the per-source lifecycle.
+type Manager struct {
 	cfg   *config.Config
-	jobs  []*Job
 	store *store.Store
 	log   *slog.Logger
 
 	mu      sync.Mutex
+	jobs    map[string]*Job
 	running map[string]bool
+	root    context.Context
+	cancel  context.CancelFunc
+	started bool
 }
 
-// NewScheduler builds a scheduler over ready jobs.
-func NewScheduler(cfg *config.Config, jobs []*Job, st *store.Store, log *slog.Logger) *Scheduler {
-	return &Scheduler{cfg: cfg, jobs: jobs, store: st, log: log, running: map[string]bool{}}
-}
-
-// Run blocks until ctx is cancelled.
-func (s *Scheduler) Run(ctx context.Context) {
-	var wg sync.WaitGroup
-	for i, job := range s.jobs {
-		wg.Add(1)
-		go func(i int, job *Job) {
-			defer wg.Done()
-			// Stagger the first poll a little so twenty feeds do not all hit
-			// the network in the same millisecond.
-			initial := time.Duration(i*120)*time.Millisecond + jitter(time.Second)
-			s.loop(ctx, job, initial)
-		}(i, job)
+// NewManager builds an empty manager. Call Start before serving requests.
+func NewManager(cfg *config.Config, st *store.Store, log *slog.Logger) *Manager {
+	return &Manager{
+		cfg:     cfg,
+		store:   st,
+		log:     log,
+		jobs:    map[string]*Job{},
+		running: map[string]bool{},
 	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		s.maintenance(ctx)
-	}()
-	wg.Wait()
 }
 
-func (s *Scheduler) loop(ctx context.Context, job *Job, initial time.Duration) {
+// Start loads enabled subscriptions from the database and starts their
+// goroutines. It returns once every source has a job (or a recorded error).
+func (m *Manager) Start(ctx context.Context) error {
+	m.mu.Lock()
+	if m.started {
+		m.mu.Unlock()
+		return errors.New("manager already started")
+	}
+	m.root, m.cancel = context.WithCancel(ctx)
+	m.started = true
+	m.mu.Unlock()
+
+	sources, err := m.store.ListSources(ctx, false)
+	if err != nil {
+		return err
+	}
+	for i, src := range sources {
+		if !src.Enabled {
+			continue
+		}
+		initial := time.Duration(i*120)*time.Millisecond + jitter(time.Second)
+		if err := m.start(src, initial); err != nil {
+			m.log.Error("cannot start source", "source", src.ID, "kind", src.Kind, "err", err)
+			_ = m.store.MarkRun(ctx, src.ID, 0, 0, err)
+		}
+	}
+	go m.maintenance(m.root)
+	return nil
+}
+
+// Close stops every goroutine and waits for them, with a bounded grace period.
+func (m *Manager) Close() {
+	m.mu.Lock()
+	if !m.started {
+		m.mu.Unlock()
+		return
+	}
+	m.started = false
+	if m.cancel != nil {
+		m.cancel()
+	}
+	jobs := make([]*Job, 0, len(m.jobs))
+	for _, job := range m.jobs {
+		jobs = append(jobs, job)
+	}
+	m.jobs = map[string]*Job{}
+	m.mu.Unlock()
+
+	deadline := time.After(12 * time.Second)
+	for _, job := range jobs {
+		select {
+		case <-job.done:
+		case <-deadline:
+			m.log.Warn("source did not stop in time", "source", job.Source.ID)
+			return
+		}
+	}
+}
+
+// Add starts a newly created subscription. The source must already be stored.
+func (m *Manager) Add(src model.Source) error {
+	m.mu.Lock()
+	started := m.started
+	_, exists := m.jobs[src.ID]
+	m.mu.Unlock()
+	if !started {
+		return errors.New("manager is not started")
+	}
+	if exists {
+		return fmt.Errorf("source %q is already running", src.ID)
+	}
+	return m.start(src, jitter(700*time.Millisecond))
+}
+
+// Update applies an edited subscription. Metadata changes do not interrupt a
+// job; a changed kind, interval or option set restarts it.
+func (m *Manager) Update(src model.Source) error {
+	m.mu.Lock()
+	job, exists := m.jobs[src.ID]
+	m.mu.Unlock()
+
+	if !src.Enabled {
+		if exists {
+			m.stop(job)
+		}
+		return nil
+	}
+	if !exists {
+		return m.Add(src)
+	}
+
+	m.mu.Lock()
+	changed := job.Source.Kind != src.Kind ||
+		job.Source.Interval != src.Interval ||
+		!reflect.DeepEqual(job.Source.Options, src.Options)
+	if !changed {
+		job.Source = src
+	}
+	m.mu.Unlock()
+
+	if changed {
+		m.stop(job)
+		return m.start(src, jitter(700*time.Millisecond))
+	}
+	return nil
+}
+
+// Remove stops a subscription. The database row is soft-deleted by the API.
+func (m *Manager) Remove(id string) {
+	m.mu.Lock()
+	job, ok := m.jobs[id]
+	if ok {
+		delete(m.jobs, id)
+	}
+	m.mu.Unlock()
+	if ok {
+		m.stop(job)
+	}
+}
+
+// TriggerAll asks every source to poll now.
+func (m *Manager) TriggerAll() int {
+	m.mu.Lock()
+	jobs := make([]*Job, 0, len(m.jobs))
+	for _, job := range m.jobs {
+		jobs = append(jobs, job)
+	}
+	m.mu.Unlock()
+	n := 0
+	for _, job := range jobs {
+		select {
+		case job.trig <- struct{}{}:
+			n++
+		default:
+		}
+	}
+	return n
+}
+
+// TriggerOne asks one source to poll now.
+func (m *Manager) TriggerOne(id string) bool {
+	m.mu.Lock()
+	job, ok := m.jobs[id]
+	m.mu.Unlock()
+	if !ok {
+		return false
+	}
+	select {
+	case job.trig <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Manager) start(src model.Source, initial time.Duration) error {
+	fetcher, err := source.New(src.Kind)
+	if err != nil {
+		return err
+	}
+	src.Options = m.withProxy(src.Options)
+
+	m.mu.Lock()
+	if m.root == nil {
+		m.mu.Unlock()
+		return errors.New("manager is not started")
+	}
+	if _, exists := m.jobs[src.ID]; exists {
+		m.mu.Unlock()
+		return fmt.Errorf("source %q is already running", src.ID)
+	}
+	ctx, cancel := context.WithCancel(m.root)
+	job := &Job{
+		Source:  src,
+		fetcher: fetcher,
+		trig:    make(chan struct{}, 1),
+		cancel:  cancel,
+		done:    make(chan struct{}),
+	}
+	m.jobs[src.ID] = job
+	m.mu.Unlock()
+
+	go m.loop(ctx, job, initial)
+	return nil
+}
+
+func (m *Manager) stop(job *Job) {
+	job.cancel()
+	select {
+	case <-job.done:
+	case <-time.After(12 * time.Second):
+		m.log.Warn("source did not stop in time", "source", job.Source.ID)
+	}
+}
+
+func (m *Manager) withProxy(options map[string]any) map[string]any {
+	out := make(map[string]any, len(options)+1)
+	for key, value := range options {
+		out[key] = value
+	}
+	if m.cfg.Fetch.Proxy != "" && out["proxy"] == nil {
+		out["proxy"] = m.cfg.Fetch.Proxy
+	}
+	return out
+}
+
+func (m *Manager) loop(ctx context.Context, job *Job, initial time.Duration) {
+	defer close(job.done)
 	timer := time.NewTimer(initial)
 	defer timer.Stop()
 
@@ -101,24 +280,22 @@ func (s *Scheduler) loop(ctx context.Context, job *Job, initial time.Duration) {
 		}
 
 		start := time.Now()
-		err := s.run(ctx, job)
-		dur := time.Since(start)
+		err := m.run(ctx, job)
+		took := time.Since(start)
 
-		delay := job.Config.Interval.Std()
+		delay := job.Source.Interval
 		if err != nil {
 			backoff++
 			if backoff > 4 {
 				backoff = 4
 			}
-			mult := time.Duration(1 << backoff)
-			delay = minDuration(delay*mult, 6*time.Hour)
-			s.log.Warn("fetch failed", "source", job.Config.ID, "kind", job.Config.Kind,
-				"err", err, "retry_in", delay.Round(time.Second), "took", dur.Round(time.Millisecond))
+			delay = minDuration(delay*time.Duration(1<<backoff), 6*time.Hour)
+			m.log.Warn("fetch failed", "source", job.Source.ID, "kind", job.Source.Kind,
+				"err", err, "retry_in", delay.Round(time.Second), "took", took.Round(time.Millisecond))
 		} else {
 			backoff = 0
 		}
-		// A manual refresh that arrived during the fetch is already served by
-		// this run; drop it instead of polling twice in a row.
+		// A manual refresh that arrived during the fetch is already served.
 		select {
 		case <-job.trig:
 		default:
@@ -127,90 +304,61 @@ func (s *Scheduler) loop(ctx context.Context, job *Job, initial time.Duration) {
 	}
 }
 
-func (s *Scheduler) run(ctx context.Context, job *Job) error {
-	if !s.begin(job.Config.ID) {
-		return nil // already running because of a manual refresh
+func (m *Manager) run(ctx context.Context, job *Job) error {
+	if !m.begin(job.Source.ID) {
+		return nil
 	}
-	defer s.end(job.Config.ID)
+	defer m.end(job.Source.ID)
 
-	fctx, cancel := context.WithTimeout(ctx, s.cfg.Fetch.Timeout.Std())
+	fctx, cancel := context.WithTimeout(ctx, m.cfg.Fetch.Timeout.Std())
 	defer cancel()
 
 	start := time.Now()
-	items, err := job.fetcher.Fetch(fctx, source.Options(job.Config.Options))
-	if len(items) > s.cfg.Fetch.MaxItems {
-		items = items[:s.cfg.Fetch.MaxItems]
+	items, err := job.fetcher.Fetch(fctx, source.Options(job.Source.Options))
+	if len(items) > m.cfg.Fetch.MaxItems {
+		items = items[:m.cfg.Fetch.MaxItems]
 	}
 	newItems := 0
 	if err == nil {
-		newItems, err = s.store.InsertItems(ctx, job.Config.ID, items)
+		newItems, err = m.store.InsertItems(ctx, job.Source.ID, items)
 	}
 	elapsed := time.Since(start)
-	if err := s.store.MarkRun(ctx, job.Config.ID, elapsed, newItems, err); err != nil {
-		s.log.Error("record source state", "source", job.Config.ID, "err", err)
+	if markErr := m.store.MarkRun(ctx, job.Source.ID, elapsed, newItems, err); markErr != nil {
+		m.log.Error("record source state", "source", job.Source.ID, "err", markErr)
 	}
 	if err != nil {
 		return err
 	}
-	s.log.Info("fetched", "source", job.Config.ID, "kind", job.Config.Kind,
+	m.log.Info("fetched", "source", job.Source.ID, "kind", job.Source.Kind,
 		"items", len(items), "new", newItems, "took", elapsed.Round(time.Millisecond))
 	return nil
 }
 
-func (s *Scheduler) begin(id string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.running[id] {
+func (m *Manager) begin(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.running[id] {
 		return false
 	}
-	s.running[id] = true
+	m.running[id] = true
 	return true
 }
 
-func (s *Scheduler) end(id string) {
-	s.mu.Lock()
-	delete(s.running, id)
-	s.mu.Unlock()
+func (m *Manager) end(id string) {
+	m.mu.Lock()
+	delete(m.running, id)
+	m.mu.Unlock()
 }
 
-// Trigger asks every source to poll now. Sources already polling are skipped.
-// It returns how many subscriptions were signalled.
-func (s *Scheduler) Trigger() int {
-	n := 0
-	for _, job := range s.jobs {
-		select {
-		case job.trig <- struct{}{}:
-			n++
-		default:
-		}
-	}
-	return n
-}
-
-// TriggerOne asks a single source to poll now.
-func (s *Scheduler) TriggerOne(id string) bool {
-	for _, job := range s.jobs {
-		if job.Config.ID == id {
-			select {
-			case job.trig <- struct{}{}:
-				return true
-			default:
-				return false
-			}
-		}
-	}
-	return false
-}
-
-func (s *Scheduler) maintenance(ctx context.Context) {
+func (m *Manager) maintenance(ctx context.Context) {
 	prune := func() {
-		n, err := s.store.Prune(ctx, s.cfg.Fetch.RetentionDays)
+		n, err := m.store.Prune(ctx, m.cfg.Fetch.RetentionDays)
 		if err != nil {
-			s.log.Error("prune", "err", err)
+			m.log.Error("prune", "err", err)
 			return
 		}
 		if n > 0 {
-			s.log.Info("pruned old items", "count", n, "retention_days", s.cfg.Fetch.RetentionDays)
+			m.log.Info("pruned old items", "count", n, "retention_days", m.cfg.Fetch.RetentionDays)
 		}
 	}
 	prune()
@@ -226,7 +374,7 @@ func (s *Scheduler) maintenance(ctx context.Context) {
 	}
 }
 
-// Result is the outcome of a single one-shot fetch.
+// Result is the outcome of a one-shot fetch.
 type Result struct {
 	SourceID string        `json:"source_id"`
 	Kind     string        `json:"kind"`
@@ -236,13 +384,16 @@ type Result struct {
 	Err      error         `json:"-"`
 }
 
-// RunBatch fetches selected jobs once, with a worker pool. Used by
-// "newsd fetch" so the same code path is exercised from cron and from serve.
-func RunBatch(ctx context.Context, cfg *config.Config, st *store.Store, jobs []*Job, filter string, log *slog.Logger) []Result {
-	selected := make([]*Job, 0, len(jobs))
-	for _, job := range jobs {
-		if filter == "" || job.Config.ID == filter {
-			selected = append(selected, job)
+// RunBatch fetches selected subscriptions once, with a worker pool. Used by
+// "newsd fetch" so the same code path runs from cron and from serve.
+func RunBatch(ctx context.Context, cfg *config.Config, st *store.Store, sources []model.Source, filter string, log *slog.Logger) []Result {
+	selected := make([]model.Source, 0, len(sources))
+	for _, src := range sources {
+		if !src.Enabled {
+			continue
+		}
+		if filter == "" || src.ID == filter {
+			selected = append(selected, src)
 		}
 	}
 	workers := cfg.Fetch.Workers
@@ -252,7 +403,7 @@ func RunBatch(ctx context.Context, cfg *config.Config, st *store.Store, jobs []*
 	if workers > len(selected) {
 		workers = len(selected)
 	}
-	queue := make(chan *Job)
+	queue := make(chan model.Source)
 	results := make([]Result, 0, len(selected))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -261,25 +412,33 @@ func RunBatch(ctx context.Context, cfg *config.Config, st *store.Store, jobs []*
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for job := range queue {
+			for src := range queue {
 				start := time.Now()
+				fetcher, err := source.New(src.Kind)
+				if err != nil {
+					mu.Lock()
+					results = append(results, Result{SourceID: src.ID, Kind: src.Kind, Err: err})
+					mu.Unlock()
+					continue
+				}
+				opts := withProxy(cfg, src.Options)
 				fctx, cancel := context.WithTimeout(ctx, cfg.Fetch.Timeout.Std())
-				items, err := job.fetcher.Fetch(fctx, source.Options(job.Config.Options))
+				items, err := fetcher.Fetch(fctx, source.Options(opts))
 				cancel()
 				if len(items) > cfg.Fetch.MaxItems {
 					items = items[:cfg.Fetch.MaxItems]
 				}
 				newItems := 0
 				if err == nil {
-					newItems, err = st.InsertItems(ctx, job.Config.ID, items)
+					newItems, err = st.InsertItems(ctx, src.ID, items)
 				}
-				if mErr := st.MarkRun(ctx, job.Config.ID, time.Since(start), newItems, err); mErr != nil && log != nil {
-					log.Error("record source state", "source", job.Config.ID, "err", mErr)
+				if mErr := st.MarkRun(ctx, src.ID, time.Since(start), newItems, err); mErr != nil && log != nil {
+					log.Error("record source state", "source", src.ID, "err", mErr)
 				}
 				mu.Lock()
 				results = append(results, Result{
-					SourceID: job.Config.ID,
-					Kind:     job.Config.Kind,
+					SourceID: src.ID,
+					Kind:     src.Kind,
 					Fetched:  len(items),
 					New:      newItems,
 					Duration: time.Since(start),
@@ -289,12 +448,23 @@ func RunBatch(ctx context.Context, cfg *config.Config, st *store.Store, jobs []*
 			}
 		}()
 	}
-	for _, job := range selected {
-		queue <- job
+	for _, src := range selected {
+		queue <- src
 	}
 	close(queue)
 	wg.Wait()
 	return results
+}
+
+func withProxy(cfg *config.Config, options map[string]any) map[string]any {
+	out := make(map[string]any, len(options)+1)
+	for key, value := range options {
+		out[key] = value
+	}
+	if cfg.Fetch.Proxy != "" && out["proxy"] == nil {
+		out["proxy"] = cfg.Fetch.Proxy
+	}
+	return out
 }
 
 func jitter(d time.Duration) time.Duration {

@@ -178,3 +178,62 @@ export function BrandMark({ size = 26 }: { size?: number }) {
     </svg>
   )
 }
+
+export function IconPlus(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  )
+}
+
+export function IconPencil(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" />
+      <path d="m13.5 6.5 3 3" />
+    </svg>
+  )
+}
+
+export function IconTrash(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" />
+    </svg>
+  )
+}
+
+export function IconPause(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M8 5v14M16 5v14" />
+    </svg>
+  )
+}
+
+export function IconPlay(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="m7 4 13 8-13 8V4Z" />
+    </svg>
+  )
+}
+
+export function IconUpload(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M12 16V4M7 9l5-5 5 5M4 20h16" />
+    </svg>
+  )
+}
+
+export function IconSettings(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 7h10M18 7h2M4 17h2M10 17h10" />
+      <circle cx="16" cy="7" r="2" />
+      <circle cx="8" cy="17" r="2" />
+    </svg>
+  )
+}

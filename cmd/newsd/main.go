@@ -83,34 +83,25 @@ func cmdServe(args []string, log *slog.Logger) int {
 	}
 	defer st.Close()
 
-	jobs, err := ingest.NewJobs(cfg)
-	if err != nil {
-		log.Error("config", "err", err)
-		return 1
-	}
-	sources := make([]model.Source, 0, len(jobs))
-	for _, job := range jobs {
-		sources = append(sources, model.Source{
-			ID:       job.Config.ID,
-			Kind:     job.Config.Kind,
-			Label:    job.Config.Label,
-			SiteURL:  job.Config.Site,
-			Group:    job.Config.Group,
-			Interval: job.Config.Interval.Std(),
-		})
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := st.SyncSources(ctx, sources); err != nil {
-		log.Error("sync sources", "err", err)
+	if err := st.SeedSources(ctx, seedSources(cfg)); err != nil {
+		log.Error("seed sources", "err", err)
 		return 1
 	}
+	if err := seedFromFile(ctx, cfg, st, log); err != nil {
+		log.Error("seed file", "err", err)
+		return 1
+	}
+	mgr := ingest.NewManager(cfg, st, log)
+	if err := mgr.Start(ctx); err != nil {
+		log.Error("start sources", "err", err)
+		return 1
+	}
+	defer mgr.Close()
 
-	sched := ingest.NewScheduler(cfg, jobs, st, log)
-	go sched.Run(ctx)
-
-	handler := api.New(cfg, st, sched, log, version).Handler()
+	handler := api.New(cfg, st, mgr, log, version).Handler()
 	srv := &http.Server{
 		Addr:              cfg.Server.Addr,
 		Handler:           handler,
@@ -122,7 +113,8 @@ func cmdServe(args []string, log *slog.Logger) int {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("serving", "addr", "http://"+cfg.Server.Addr, "sources", len(jobs), "db", cfg.Database.Path)
+		count, _ := st.CountSources(ctx)
+		log.Info("serving", "addr", "http://"+cfg.Server.Addr, "sources", count, "db", cfg.Database.Path)
 		errCh <- srv.ListenAndServe()
 	}()
 
@@ -139,6 +131,43 @@ func cmdServe(args []string, log *slog.Logger) int {
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
 	return 0
+}
+
+func seedFromFile(ctx context.Context, cfg *config.Config, st *store.Store, log *slog.Logger) error {
+	if cfg.Database.SeedFile == "" {
+		return nil
+	}
+	count, err := st.CountSources(ctx)
+	if err != nil || count > 0 {
+		return err
+	}
+	seedCfg, err := config.Load(cfg.Database.SeedFile)
+	if err != nil {
+		return err
+	}
+	if err := st.SeedSources(ctx, seedSources(seedCfg)); err != nil {
+		return err
+	}
+	log.Info("seeded sources from file", "file", cfg.Database.SeedFile, "sources", len(seedCfg.Sources))
+	return nil
+}
+
+func seedSources(cfg *config.Config) []model.Source {
+	out := make([]model.Source, 0, len(cfg.Sources))
+	for _, sc := range cfg.Sources {
+		out = append(out, model.Source{
+			ID:       sc.ID,
+			Kind:     sc.Kind,
+			Label:    sc.Label,
+			SiteURL:  sc.Site,
+			Group:    sc.Group,
+			Interval: sc.Interval.Std(),
+			Options:  sc.Options,
+			Enabled:  sc.IsEnabled(),
+			Origin:   "config",
+		})
+	}
+	return out
 }
 
 func cmdFetch(args []string, log *slog.Logger) int {
@@ -159,26 +188,23 @@ func cmdFetch(args []string, log *slog.Logger) int {
 	}
 	defer st.Close()
 
-	jobs, err := ingest.NewJobs(cfg)
-	if err != nil {
-		log.Error("config", "err", err)
-		return 1
-	}
-	sources := make([]model.Source, 0, len(jobs))
-	for _, job := range jobs {
-		sources = append(sources, model.Source{
-			ID: job.Config.ID, Kind: job.Config.Kind, Label: job.Config.Label,
-			SiteURL: job.Config.Site, Group: job.Config.Group, Interval: job.Config.Interval.Std(),
-		})
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	if err := st.SyncSources(ctx, sources); err != nil {
-		log.Error("sync sources", "err", err)
+	if err := st.SeedSources(ctx, seedSources(cfg)); err != nil {
+		log.Error("seed sources", "err", err)
+		return 1
+	}
+	if err := seedFromFile(ctx, cfg, st, log); err != nil {
+		log.Error("seed file", "err", err)
+		return 1
+	}
+	sources, err := st.ListSources(ctx, false)
+	if err != nil {
+		log.Error("load sources", "err", err)
 		return 1
 	}
 
-	results := ingest.RunBatch(ctx, cfg, st, jobs, filter, log)
+	results := ingest.RunBatch(ctx, cfg, st, sources, filter, log)
 	sort.Slice(results, func(i, j int) bool { return results[i].SourceID < results[j].SourceID })
 
 	ok := 0

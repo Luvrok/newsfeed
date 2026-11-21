@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import type { SourcesResponse } from '../api'
 import { formatRelative, intervalLabel, kindLabel, plural } from '../lib'
-import { IconClose, IconRefresh } from './Icons'
+import { IconClose, IconRefresh, IconSettings } from './Icons'
 
 interface StatusPanelProps {
   open: boolean
@@ -12,6 +12,7 @@ interface StatusPanelProps {
   refreshingAll: boolean
   onRefreshSource: (id: string) => void
   onRefreshAll: () => void
+  onManage: () => void
 }
 
 const rank: Record<string, number> = { error: 0, stale: 1, never: 2, ok: 3 }
@@ -25,6 +26,7 @@ export function StatusPanel({
   refreshingAll,
   onRefreshSource,
   onRefreshAll,
+  onManage,
 }: StatusPanelProps) {
   useEffect(() => {
     if (!open) return
@@ -105,10 +107,22 @@ export function StatusPanel({
         </div>
 
         <footer className="status-foot">
-          <button className="status-refresh-all" onClick={onRefreshAll} disabled={refreshingAll}>
-            <IconRefresh size={15} className={refreshingAll ? 'spin' : undefined} />
-            {refreshingAll ? 'Polling every source…' : 'Refresh all sources'}
-          </button>
+          <div className="status-foot-actions">
+            <button className="status-refresh-all" onClick={onRefreshAll} disabled={refreshingAll}>
+              <IconRefresh size={15} className={refreshingAll ? 'spin' : undefined} />
+              {refreshingAll ? 'Polling every source…' : 'Refresh all sources'}
+            </button>
+            <button
+              className="status-manage"
+              onClick={() => {
+                onClose()
+                onManage()
+              }}
+            >
+              <IconSettings size={15} />
+              Manage sources
+            </button>
+          </div>
           <p>
             The scheduler polls in the background, independently of this page. A source that
             fails is retried with backoff; the error above is from its last attempt.

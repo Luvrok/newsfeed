@@ -1,0 +1,360 @@
+# First-run subscriptions migrated from the old Miniflux list.
+#
+# This file is only a seed. After the first start the SQLite `sources` table is
+# the source of truth; add, edit and delete in /manage. The seed is not applied
+# again while the database already has sources.
+#
+# Categories from Miniflux are kept as groups: Breaking, World, US, Tech,
+# Entertainment, Data, News, YouTube.
+
+# ---------------------------------------------------------------------------
+# Breaking
+# ---------------------------------------------------------------------------
+
+[[sources]]
+id = "meduza"
+kind = "rss"
+label = "Meduza"
+site = "https://meduza.io"
+group = "Breaking"
+interval = "10m"
+[sources.options]
+url = "https://meduza.io/rss/all"
+limit = 25
+
+[[sources]]
+id = "tg-ateo"
+kind = "telegram"
+label = "Ateo Breaking"
+site = "https://t.me/ateobreaking"
+group = "Breaking"
+interval = "5m"
+[sources.options]
+channels = ["ateobreaking"]
+limit = 20
+skip = ["спонсор показа", "Durev VPN", "erid"]
+
+# ---------------------------------------------------------------------------
+# World news
+# ---------------------------------------------------------------------------
+
+[[sources]]
+id = "bbc-world"
+kind = "rss"
+label = "BBC World"
+site = "https://www.bbc.com/news/world"
+group = "World"
+interval = "15m"
+[sources.options]
+url = "https://feeds.bbci.co.uk/news/world/rss.xml"
+limit = 25
+
+# ---------------------------------------------------------------------------
+# Reddit — public RSS through the proxy
+# ---------------------------------------------------------------------------
+
+[[sources]]
+id = "reddit-worldnews"
+kind = "reddit"
+label = "r/worldnews"
+site = "https://www.reddit.com/r/worldnews"
+group = "World"
+interval = "30m"
+[sources.options]
+subreddits = ["worldnews"]
+sort = "top"
+time = "week"
+limit = 10
+
+[[sources]]
+id = "reddit-europe"
+kind = "reddit"
+label = "r/europe"
+site = "https://www.reddit.com/r/europe"
+group = "World"
+interval = "30m"
+[sources.options]
+subreddits = ["europe"]
+sort = "top"
+time = "week"
+limit = 10
+
+[[sources]]
+id = "reddit-geopolitics"
+kind = "reddit"
+label = "r/geopolitics"
+site = "https://www.reddit.com/r/geopolitics"
+group = "World"
+interval = "30m"
+[sources.options]
+subreddits = ["geopolitics"]
+sort = "top"
+time = "week"
+limit = 10
+
+[[sources]]
+id = "reddit-news"
+kind = "reddit"
+label = "r/news"
+site = "https://www.reddit.com/r/news"
+group = "US"
+interval = "30m"
+[sources.options]
+subreddits = ["news"]
+sort = "top"
+time = "week"
+limit = 10
+
+[[sources]]
+id = "reddit-politics"
+kind = "reddit"
+label = "r/politics"
+site = "https://www.reddit.com/r/politics"
+group = "US"
+interval = "30m"
+[sources.options]
+subreddits = ["politics"]
+sort = "top"
+time = "week"
+limit = 10
+
+[[sources]]
+id = "reddit-movies"
+kind = "reddit"
+label = "r/movies"
+site = "https://www.reddit.com/r/movies"
+group = "Entertainment"
+interval = "30m"
+[sources.options]
+subreddits = ["movies"]
+sort = "top"
+time = "day"
+limit = 10
+
+[[sources]]
+id = "reddit-fivethirtyeight"
+kind = "reddit"
+label = "r/fivethirtyeight"
+site = "https://www.reddit.com/r/fivethirtyeight"
+group = "Data"
+interval = "1h"
+[sources.options]
+subreddits = ["fivethirtyeight"]
+sort = "top"
+time = "week"
+limit = 5
+
+[[sources]]
+id = "reddit-dataisbeautiful"
+kind = "reddit"
+label = "r/dataisbeautiful"
+site = "https://www.reddit.com/r/dataisbeautiful"
+group = "Data"
+interval = "1h"
+[sources.options]
+subreddits = ["dataisbeautiful"]
+sort = "top"
+time = "week"
+limit = 5
+
+[[sources]]
+id = "reddit-mapporn"
+kind = "reddit"
+label = "r/MapPorn"
+site = "https://www.reddit.com/r/MapPorn"
+group = "Data"
+interval = "1h"
+[sources.options]
+subreddits = ["MapPorn"]
+sort = "top"
+time = "week"
+limit = 5
+
+[[sources]]
+id = "reddit-localllama"
+kind = "reddit"
+label = "r/LocalLLaMA"
+site = "https://www.reddit.com/r/LocalLLaMA"
+group = "Tech"
+interval = "30m"
+[sources.options]
+subreddits = ["LocalLLaMA"]
+sort = "top"
+time = "day"
+limit = 10
+
+[[sources]]
+id = "reddit-linux"
+kind = "reddit"
+label = "r/linux"
+site = "https://www.reddit.com/r/linux"
+group = "Tech"
+interval = "30m"
+[sources.options]
+subreddits = ["linux"]
+sort = "top"
+time = "day"
+limit = 5
+
+# ---------------------------------------------------------------------------
+# Habr
+# ---------------------------------------------------------------------------
+
+[[sources]]
+id = "habr-ai"
+kind = "rss"
+label = "Habr · AI"
+site = "https://habr.com/ru/hubs/artificial_intelligence/"
+group = "Tech"
+interval = "1h"
+[sources.options]
+url = "https://habr.com/ru/rss/hubs/artificial_intelligence/articles/top/monthly/?fl=ru&limit=5"
+limit = 5
+
+[[sources]]
+id = "habr-linux-dev"
+kind = "rss"
+label = "Habr · Linux Dev"
+site = "https://habr.com/ru/hubs/linux_dev/"
+group = "Tech"
+interval = "1h"
+[sources.options]
+url = "https://habr.com/ru/rss/hubs/linux_dev/articles/top/monthly/?fl=ru&limit=5"
+limit = 5
+
+[[sources]]
+id = "habr-linux"
+kind = "rss"
+label = "Habr · Linux"
+site = "https://habr.com/ru/hubs/linux/"
+group = "Tech"
+interval = "1h"
+[sources.options]
+url = "https://habr.com/ru/rss/hubs/linux/articles/top/monthly/?fl=ru&limit=5"
+limit = 5
+
+[[sources]]
+id = "habr-sys-admin"
+kind = "rss"
+label = "Habr · Sysadmin"
+site = "https://habr.com/ru/hubs/sys_admin/"
+group = "Tech"
+interval = "1h"
+[sources.options]
+url = "https://habr.com/ru/rss/hubs/sys_admin/articles/top/monthly/?fl=ru&limit=5"
+limit = 5
+
+[[sources]]
+id = "habr-db-admins"
+kind = "rss"
+label = "Habr · DB Admins"
+site = "https://habr.com/ru/hubs/db_admins/"
+group = "Tech"
+interval = "1h"
+[sources.options]
+url = "https://habr.com/ru/rss/hubs/db_admins/articles/top/monthly/?fl=ru&limit=5"
+limit = 5
+
+[[sources]]
+id = "habr-s-admin"
+kind = "rss"
+label = "Habr · S_admin"
+site = "https://habr.com/ru/hubs/s_admin/"
+group = "Tech"
+interval = "1h"
+[sources.options]
+url = "https://habr.com/ru/rss/hubs/s_admin/articles/top/monthly/?fl=ru&limit=5"
+limit = 5
+
+[[sources]]
+id = "habr-devops"
+kind = "rss"
+label = "Habr · DevOps"
+site = "https://habr.com/ru/hubs/devops/"
+group = "Tech"
+interval = "1h"
+[sources.options]
+url = "https://habr.com/ru/rss/hubs/devops/articles/top/monthly/?fl=ru&limit=5"
+limit = 5
+
+[[sources]]
+id = "habr-postgresql"
+kind = "rss"
+label = "Habr · PostgreSQL"
+site = "https://habr.com/ru/hubs/postgresql/"
+group = "Tech"
+interval = "1h"
+[sources.options]
+url = "https://habr.com/ru/rss/hubs/postgresql/articles/top/monthly/?fl=ru&limit=5"
+limit = 5
+
+[[sources]]
+id = "habr-kubernetes"
+kind = "rss"
+label = "Habr · Kubernetes"
+site = "https://habr.com/ru/hubs/kubernetes/"
+group = "Tech"
+interval = "1h"
+[sources.options]
+url = "https://habr.com/ru/rss/hubs/kubernetes/articles/top/monthly/?fl=ru&limit=5"
+limit = 5
+
+[[sources]]
+id = "habr-go"
+kind = "rss"
+label = "Habr · Go"
+site = "https://habr.com/ru/hubs/go/"
+group = "Tech"
+interval = "1h"
+[sources.options]
+url = "https://habr.com/ru/rss/hubs/go/articles/top/monthly/?fl=ru&limit=5"
+limit = 5
+
+[[sources]]
+id = "habr-data-viz"
+kind = "rss"
+label = "Habr · Data Visualization"
+site = "https://habr.com/ru/hubs/data_visualization/"
+group = "Tech"
+interval = "1h"
+[sources.options]
+url = "https://habr.com/ru/rss/hubs/data_visualization/articles/top/monthly/?fl=ru&limit=5"
+limit = 5
+
+[[sources]]
+id = "habr-virtualization"
+kind = "rss"
+label = "Habr · Virtualization"
+site = "https://habr.com/ru/hubs/virtualization/"
+group = "Tech"
+interval = "1h"
+[sources.options]
+url = "https://habr.com/ru/rss/hubs/virtualization/articles/top/monthly/?fl=ru&limit=5"
+limit = 5
+
+# ---------------------------------------------------------------------------
+# The rest
+# ---------------------------------------------------------------------------
+
+[[sources]]
+id = "myshows"
+kind = "rss"
+label = "MyShows"
+site = "https://myshows.me"
+group = "News"
+interval = "30m"
+[sources.options]
+url = "https://myshows.me/v3/rss/"
+limit = 20
+
+[[sources]]
+id = "youtube-badcomedian"
+kind = "rss"
+label = "BadComedian"
+site = "https://www.youtube.com/@TheBadComedian"
+group = "YouTube"
+interval = "30m"
+[sources.options]
+url = "http://127.0.0.1:1200/youtube/user/@TheBadComedian"
+limit = 10
+summary = false

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getItems, refreshSource, triggerRefresh, type Story } from './api'
 import { BrandMark, IconArrow, IconClose, IconRefresh } from './components/Icons'
 import { Header } from './components/Header'
+import { ManagePage } from './components/ManagePage'
 import { RightRail } from './components/RightRail'
 import { Shortcuts } from './components/Shortcuts'
 import { Sidebar } from './components/Sidebar'
@@ -35,6 +36,10 @@ function initialSources(): Set<string> {
   return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean))
 }
 
+function managePath(): boolean {
+  return window.location.pathname === '/manage' || window.location.pathname === '/manage/'
+}
+
 function storyIdFromPath(): number | null {
   const match = window.location.pathname.match(/^\/story\/(\d+)\/?$/)
   if (!match) return null
@@ -59,6 +64,7 @@ export default function App() {
   const [focus, setFocus] = useState(-1)
   const [savedExtra, setSavedExtra] = useState<Story[]>([])
   const [storyId, setStoryId] = useState<number | null>(() => storyIdFromPath())
+  const [manage, setManage] = useState(() => managePath())
   const [statusOpen, setStatusOpen] = useState(
     () => new URLSearchParams(window.location.search).has('status'),
   )
@@ -89,20 +95,22 @@ export default function App() {
   }, [theme])
 
   useEffect(() => {
-    if (storyId !== null) return
+    if (storyId !== null || manage) return
     const params = new URLSearchParams()
     if (tab !== 'all') params.set('tab', tab)
     if (query) params.set('q', query)
     if (selected.size > 0) params.set('source', [...selected].sort().join(','))
     const qs = params.toString()
     history.replaceState(null, '', qs ? `?${qs}` : window.location.pathname)
-  }, [tab, query, selected, storyId])
+  }, [tab, query, selected, storyId, manage])
 
   useEffect(() => {
     const onPop = () => {
-      const next = storyIdFromPath()
-      setStoryId(next)
-      if (next === null) {
+      const nextStory = storyIdFromPath()
+      const nextManage = managePath()
+      setStoryId(nextStory)
+      setManage(nextManage)
+      if (nextStory === null && !nextManage) {
         const top = feedScroll.current
         requestAnimationFrame(() => window.scrollTo(0, top))
       } else {
@@ -169,6 +177,29 @@ export default function App() {
       return
     }
     history.pushState({}, '', '/')
+    setStoryId(null)
+    window.scrollTo(0, 0)
+  }, [])
+
+  const openManage = useCallback(() => {
+    if (!manage && storyId === null) {
+      feedScroll.current = window.scrollY
+      openedFromFeed.current = true
+    }
+    setStatusOpen(false)
+    history.pushState({}, '', '/manage')
+    setStoryId(null)
+    setManage(true)
+    window.scrollTo(0, 0)
+  }, [manage, storyId])
+
+  const closeManage = useCallback(() => {
+    if (openedFromFeed.current) {
+      history.back()
+      return
+    }
+    history.pushState({}, '', '/')
+    setManage(false)
     setStoryId(null)
     window.scrollTo(0, 0)
   }, [])
@@ -305,7 +336,7 @@ export default function App() {
 
       // The reading view has its own keyboard handling. Do not let the hidden
       // feed list react to the same key press (double save, double open).
-      if (storyId !== null) return
+      if (storyId !== null || manage) return
 
       if (statusOpen || shortcuts || drawer) {
         if (event.key === 'Escape') {
@@ -385,7 +416,7 @@ export default function App() {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [visible, focus, openStory, toggleSave, refresh, statusOpen, shortcuts, drawer, storyId])
+  }, [visible, focus, openStory, toggleSave, refresh, statusOpen, shortcuts, drawer, storyId, manage])
 
   const dateLine = useMemo(
     () =>
@@ -416,6 +447,10 @@ export default function App() {
       refreshingAll={refreshing}
       onRefreshSource={(id) => void refreshOne(id)}
       onRefreshAll={() => void refresh()}
+      onManage={() => {
+        setStatusOpen(false)
+        if (!manage) openManage()
+      }}
     />
   )
 
@@ -432,6 +467,22 @@ export default function App() {
           saved={saved}
           onToggleSave={toggleSave}
           onRead={read.add}
+        />
+        {statusPanel}
+      </>
+    )
+  }
+
+  if (manage) {
+    return (
+      <>
+        <ManagePage
+          theme={theme}
+          onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          onBack={closeManage}
+          stats={stats}
+          onStatus={() => setStatusOpen(true)}
+          onChanged={reloadStats}
         />
         {statusPanel}
       </>
@@ -468,6 +519,7 @@ export default function App() {
           hasMore={feed.hasMore}
           lastUpdated={stats ? new Date(stats.fetched_at) : null}
           onStatus={() => setStatusOpen(true)}
+          onManage={openManage}
         />
 
         <main className="main">
@@ -625,6 +677,10 @@ export default function App() {
               onStatus={() => {
                 setDrawer(false)
                 setStatusOpen(true)
+              }}
+              onManage={() => {
+                setDrawer(false)
+                openManage()
               }}
             />
           </div>
