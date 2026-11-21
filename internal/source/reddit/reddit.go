@@ -153,11 +153,12 @@ func redditURL(base, sub, sortBy, timeRange string, limit int) string {
 	case "top":
 		path += "/top"
 	}
-	link := base + path + "/.rss?limit=" + fmt.Sprint(limit)
 	if sortBy == "top" {
-		link += "&t=" + url.QueryEscape(timeRange)
+		// Keep the same query order as the old Miniflux feed list, which Reddit
+		// accepted for years.
+		return base + path + "/.rss?t=" + url.QueryEscape(timeRange) + "&limit=" + fmt.Sprint(limit)
 	}
-	return link
+	return base + path + "/.rss?limit=" + fmt.Sprint(limit)
 }
 
 func firstImage(markup string) string {

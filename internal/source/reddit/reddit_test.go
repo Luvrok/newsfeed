@@ -66,7 +66,7 @@ func TestFetchPublicRSS(t *testing.T) {
 
 func TestFetchBuildsTopURL(t *testing.T) {
 	got := redditURL("https://www.reddit.com", "worldnews", "top", "week", 10)
-	want := "https://www.reddit.com/r/worldnews/top/.rss?limit=10&t=week"
+	want := "https://www.reddit.com/r/worldnews/top/.rss?t=week&limit=10"
 	if got != want {
 		t.Fatalf("redditURL = %q, want %q", got, want)
 	}
