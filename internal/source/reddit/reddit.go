@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mmcdole/gofeed"
@@ -65,13 +66,9 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 		out  []model.Item
 		errs []string
 	)
-	for i, sub := range subs {
-		if i > 0 {
-			select {
-			case <-ctx.Done():
-				return out, ctx.Err()
-			case <-time.After(900 * time.Millisecond):
-			}
+	for _, sub := range subs {
+		if err := paceReddit(ctx); err != nil {
+			return out, err
 		}
 		link := redditURL(base, sub, sortBy, timeRange, limit)
 		body, _, err := httpx.Get(ctx, client, link, http.Header{
@@ -183,4 +180,29 @@ func firstImage(markup string) string {
 		return ""
 	}
 	return html.UnescapeString(strings.TrimSpace(rest[start : start+end]))
+}
+
+// Reddit answers a burst with 429. All reddit sources share this gate, so
+// eleven subreddits from the seed are fetched over about a minute instead of
+// one burst.
+var redditGate struct {
+	mu   sync.Mutex
+	next time.Time
+}
+
+func paceReddit(ctx context.Context) error {
+	redditGate.mu.Lock()
+	defer redditGate.mu.Unlock()
+	wait := time.Until(redditGate.next)
+	if wait > 0 {
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	redditGate.next = time.Now().Add(5 * time.Second)
+	return nil
 }
