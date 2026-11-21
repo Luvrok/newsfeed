@@ -188,7 +188,7 @@ func cmdFetch(args []string, log *slog.Logger) int {
 	}
 	defer st.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	if err := st.SeedSources(ctx, seedSources(cfg)); err != nil {
 		log.Error("seed sources", "err", err)

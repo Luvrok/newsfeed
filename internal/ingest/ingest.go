@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"net/url"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -69,11 +71,18 @@ func (m *Manager) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	hostNext := map[string]time.Duration{}
 	for i, src := range sources {
 		if !src.Enabled {
 			continue
 		}
 		initial := time.Duration(i*120)*time.Millisecond + jitter(time.Second)
+		if host := sourceHost(src); host != "" {
+			if next := hostNext[host]; next > initial {
+				initial = next
+			}
+			hostNext[host] = initial + hostGap(src)
+		}
 		if err := m.start(src, initial); err != nil {
 			m.log.Error("cannot start source", "source", src.ID, "kind", src.Kind, "err", err)
 			_ = m.store.MarkRun(ctx, src.ID, 0, 0, err)
@@ -310,7 +319,11 @@ func (m *Manager) run(ctx context.Context, job *Job) error {
 	}
 	defer m.end(job.Source.ID)
 
-	fctx, cancel := context.WithTimeout(ctx, m.cfg.Fetch.Timeout.Std())
+	timeout := m.cfg.Fetch.Timeout.Std()
+	if job.Source.Kind == "reddit" {
+		timeout = 3 * time.Minute
+	}
+	fctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	start := time.Now()
@@ -422,7 +435,11 @@ func RunBatch(ctx context.Context, cfg *config.Config, st *store.Store, sources 
 					continue
 				}
 				opts := withProxy(cfg, src.Options)
-				fctx, cancel := context.WithTimeout(ctx, cfg.Fetch.Timeout.Std())
+				timeout := cfg.Fetch.Timeout.Std()
+				if src.Kind == "reddit" {
+					timeout = 3 * time.Minute
+				}
+				fctx, cancel := context.WithTimeout(ctx, timeout)
 				items, err := fetcher.Fetch(fctx, source.Options(opts))
 				cancel()
 				if len(items) > cfg.Fetch.MaxItems {
@@ -480,4 +497,45 @@ func minDuration(a, b time.Duration) time.Duration {
 		return a
 	}
 	return b
+}
+
+// sourceHost groups sources that hit the same upstream, so a seed with eleven
+// subreddits does not start them all in the same second.
+func sourceHost(src model.Source) string {
+	switch src.Kind {
+	case "reddit":
+		return "reddit.com"
+	case "telegram":
+		return "t.me"
+	}
+	raw := source.Options(src.Options).String("url", "")
+	if raw == "" {
+		raw = source.Options(src.Options).String("instance", "")
+	}
+	if raw == "" {
+		return ""
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
+}
+
+func hostGap(src model.Source) time.Duration {
+	switch src.Kind {
+	case "reddit":
+		return 30 * time.Second
+	case "telegram":
+		return 2 * time.Second
+	case "mastodon":
+		return 5 * time.Second
+	case "rss":
+		return 2 * time.Second
+	default:
+		return time.Second
+	}
 }

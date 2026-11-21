@@ -58,7 +58,7 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 		limit = 10
 	}
 	base := strings.TrimRight(opts.String("base_url", "https://www.reddit.com"), "/")
-	ua := opts.String("user_agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36")
+	ua := opts.String("user_agent", "linux:newsfeed:0.2 (by /u/Luvrok)")
 	client := httpx.Client(25*time.Second, ua, opts.String("proxy", ""))
 	parser := gofeed.NewParser()
 
@@ -203,6 +203,6 @@ func paceReddit(ctx context.Context) error {
 		case <-timer.C:
 		}
 	}
-	redditGate.next = time.Now().Add(5 * time.Second)
+	redditGate.next = time.Now().Add(60 * time.Second)
 	return nil
 }
