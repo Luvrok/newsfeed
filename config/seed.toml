@@ -208,6 +208,7 @@ site = "https://habr.com/ru/hubs/artificial_intelligence/"
 group = "Tech"
 interval = "1h"
 [sources.options]
+proxy = "direct"
 url = "https://habr.com/ru/rss/hubs/artificial_intelligence/articles/top/monthly/?fl=ru&limit=5"
 limit = 5
 
@@ -219,6 +220,7 @@ site = "https://habr.com/ru/hubs/linux_dev/"
 group = "Tech"
 interval = "1h"
 [sources.options]
+proxy = "direct"
 url = "https://habr.com/ru/rss/hubs/linux_dev/articles/top/monthly/?fl=ru&limit=5"
 limit = 5
 
@@ -230,6 +232,7 @@ site = "https://habr.com/ru/hubs/linux/"
 group = "Tech"
 interval = "1h"
 [sources.options]
+proxy = "direct"
 url = "https://habr.com/ru/rss/hubs/linux/articles/top/monthly/?fl=ru&limit=5"
 limit = 5
 
@@ -241,6 +244,7 @@ site = "https://habr.com/ru/hubs/sys_admin/"
 group = "Tech"
 interval = "1h"
 [sources.options]
+proxy = "direct"
 url = "https://habr.com/ru/rss/hubs/sys_admin/articles/top/monthly/?fl=ru&limit=5"
 limit = 5
 
@@ -252,6 +256,7 @@ site = "https://habr.com/ru/hubs/db_admins/"
 group = "Tech"
 interval = "1h"
 [sources.options]
+proxy = "direct"
 url = "https://habr.com/ru/rss/hubs/db_admins/articles/top/monthly/?fl=ru&limit=5"
 limit = 5
 
@@ -263,6 +268,7 @@ site = "https://habr.com/ru/hubs/s_admin/"
 group = "Tech"
 interval = "1h"
 [sources.options]
+proxy = "direct"
 url = "https://habr.com/ru/rss/hubs/s_admin/articles/top/monthly/?fl=ru&limit=5"
 limit = 5
 
@@ -274,6 +280,7 @@ site = "https://habr.com/ru/hubs/devops/"
 group = "Tech"
 interval = "1h"
 [sources.options]
+proxy = "direct"
 url = "https://habr.com/ru/rss/hubs/devops/articles/top/monthly/?fl=ru&limit=5"
 limit = 5
 
@@ -285,6 +292,7 @@ site = "https://habr.com/ru/hubs/postgresql/"
 group = "Tech"
 interval = "1h"
 [sources.options]
+proxy = "direct"
 url = "https://habr.com/ru/rss/hubs/postgresql/articles/top/monthly/?fl=ru&limit=5"
 limit = 5
 
@@ -296,6 +304,7 @@ site = "https://habr.com/ru/hubs/kubernetes/"
 group = "Tech"
 interval = "1h"
 [sources.options]
+proxy = "direct"
 url = "https://habr.com/ru/rss/hubs/kubernetes/articles/top/monthly/?fl=ru&limit=5"
 limit = 5
 
@@ -307,6 +316,7 @@ site = "https://habr.com/ru/hubs/go/"
 group = "Tech"
 interval = "1h"
 [sources.options]
+proxy = "direct"
 url = "https://habr.com/ru/rss/hubs/go/articles/top/monthly/?fl=ru&limit=5"
 limit = 5
 
@@ -318,6 +328,7 @@ site = "https://habr.com/ru/hubs/data_visualization/"
 group = "Tech"
 interval = "1h"
 [sources.options]
+proxy = "direct"
 url = "https://habr.com/ru/rss/hubs/data_visualization/articles/top/monthly/?fl=ru&limit=5"
 limit = 5
 
@@ -329,6 +340,7 @@ site = "https://habr.com/ru/hubs/virtualization/"
 group = "Tech"
 interval = "1h"
 [sources.options]
+proxy = "direct"
 url = "https://habr.com/ru/rss/hubs/virtualization/articles/top/monthly/?fl=ru&limit=5"
 limit = 5
 
@@ -344,6 +356,7 @@ site = "https://myshows.me"
 group = "News"
 interval = "30m"
 [sources.options]
+proxy = "direct"
 url = "https://myshows.me/v3/rss/"
 limit = 20
 
