@@ -36,10 +36,10 @@ function StoryRow({
   onOpen,
   onToggleSave,
 }: StoryRowProps) {
-  const [broken, setBroken] = useState(false)
-  useEffect(() => setBroken(false), [story.image])
+  const [imageState, setImageState] = useState<'loading' | 'ready' | 'error'>('loading')
+  useEffect(() => setImageState('loading'), [story.image])
 
-  const image = story.image && !broken ? story.image : ''
+  const image = story.image && imageState !== 'error' ? story.image : ''
   const tags = storyMeta(story)
   const fresh = isFresh(story.published_at, now.getTime(), 25)
   const className = [
@@ -71,7 +71,7 @@ function StoryRow({
       <article className={className} data-story-index={index}>
         <a
           className="story-hit"
-          href={story.url}
+          href={`/story/${story.id}`}
           onClick={(event) => {
             event.preventDefault()
             onOpen(story)
@@ -108,8 +108,16 @@ function StoryRow({
           </div>
         </div>
         {image && (
-          <div className="story-thumb lead-thumb">
-            <img src={image} alt="" loading="lazy" decoding="async" onError={() => setBroken(true)} />
+          <div className={`story-thumb lead-thumb ${imageState}`}>
+            {imageState === 'loading' && <span className="thumb-loader" />}
+            <img
+              src={image}
+              alt=""
+              loading="lazy"
+              decoding="async"
+              onLoad={() => setImageState('ready')}
+              onError={() => setImageState('error')}
+            />
           </div>
         )}
       </article>
@@ -120,7 +128,7 @@ function StoryRow({
     <article className={className} data-story-index={index}>
       <a
         className="story-hit"
-        href={story.url}
+        href={`/story/${story.id}`}
         onClick={(event) => {
           event.preventDefault()
           onOpen(story)
@@ -136,8 +144,16 @@ function StoryRow({
         {story.summary && <p className="story-summary">{story.summary}</p>}
       </div>
       {image && (
-        <div className="story-thumb">
-          <img src={image} alt="" loading="lazy" decoding="async" onError={() => setBroken(true)} />
+        <div className={`story-thumb ${imageState}`}>
+          {imageState === 'loading' && <span className="thumb-loader" />}
+          <img
+            src={image}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            onLoad={() => setImageState('ready')}
+            onError={() => setImageState('error')}
+          />
         </div>
       )}
       <div className="story-action">

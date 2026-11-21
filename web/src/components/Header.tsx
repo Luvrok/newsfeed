@@ -23,6 +23,7 @@ interface HeaderProps {
   onMenu: () => void
   onShortcuts: () => void
   onHome: () => void
+  onStatus: () => void
 }
 
 export function Header({
@@ -38,6 +39,7 @@ export function Header({
   onMenu,
   onShortcuts,
   onHome,
+  onStatus,
 }: HeaderProps) {
   return (
     <header className={refreshing ? 'topbar refreshing' : 'topbar'}>
@@ -74,13 +76,19 @@ export function Header({
       </div>
 
       <div className="topbar-right">
-        <div className="live-chip" title={`${sourcesOk} of ${sourcesTotal} sources healthy`}>
+        <button
+          type="button"
+          className={sourcesOk === sourcesTotal ? 'live-chip' : 'live-chip warn'}
+          onClick={onStatus}
+          title="Open source status"
+          aria-label={`Source status: ${sourcesOk} of ${sourcesTotal} online`}
+        >
           <span className={sourcesOk === sourcesTotal ? 'live-dot' : 'live-dot warn'} />
           <span className="live-text">
-            {sourcesOk}/{sourcesTotal}
+            {sourcesTotal ? `${sourcesOk}/${sourcesTotal}` : '—'}
           </span>
           <span className="live-label">live</span>
-        </div>
+        </button>
         <button
           className={refreshing ? 'icon-btn spin' : 'icon-btn'}
           onClick={onRefresh}

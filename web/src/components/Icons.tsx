@@ -105,6 +105,14 @@ export function IconKeyboard(props: IconProps) {
   )
 }
 
+export function IconArrowLeft(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M19 12H5M12 19l-7-7 7-7" />
+    </svg>
+  )
+}
+
 export function IconArrow(props: IconProps) {
   return (
     <svg {...base(props)}>

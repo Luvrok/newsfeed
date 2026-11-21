@@ -6,14 +6,16 @@ import "time"
 // Item is one story as delivered by a source. Sources fill as much as they
 // can: Title and URL are the only mandatory fields.
 type Item struct {
-	ExternalID string
-	URL        string
-	Title      string
-	Summary    string
-	Author     string
-	Image      string
-	Published  time.Time
-	Tags       []string
+	ExternalID    string
+	URL           string
+	Title         string
+	Summary       string
+	Author        string
+	Image         string
+	Content       string
+	ContentFormat string
+	Published     time.Time
+	Tags          []string
 }
 
 // Source is a subscription declared in the config file.
@@ -28,18 +30,20 @@ type Source struct {
 
 // FeedItem is an item enriched with its source, ready for the API.
 type FeedItem struct {
-	ID          int64     `json:"id"`
-	SourceID    string    `json:"source_id"`
-	Source      string    `json:"source"`
-	Kind        string    `json:"kind"`
-	Group       string    `json:"group"`
-	URL         string    `json:"url"`
-	Title       string    `json:"title"`
-	Summary     string    `json:"summary"`
-	Author      string    `json:"author"`
-	Image       string    `json:"image"`
-	PublishedAt time.Time `json:"published_at"`
-	Tags        []string  `json:"tags"`
+	ID            int64     `json:"id"`
+	SourceID      string    `json:"source_id"`
+	Source        string    `json:"source"`
+	Kind          string    `json:"kind"`
+	Group         string    `json:"group"`
+	URL           string    `json:"url"`
+	Title         string    `json:"title"`
+	Summary       string    `json:"summary"`
+	Author        string    `json:"author"`
+	Image         string    `json:"image"`
+	Content       string    `json:"content,omitempty"`
+	ContentFormat string    `json:"content_format,omitempty"`
+	PublishedAt   time.Time `json:"published_at"`
+	Tags          []string  `json:"tags"`
 }
 
 // Cursor points at the last item of a page.

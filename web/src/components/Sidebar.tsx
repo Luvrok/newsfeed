@@ -15,6 +15,7 @@ interface SidebarProps {
   hasMore: boolean
   lastUpdated: Date | null
   onNavigate?: () => void
+  onStatus: () => void
 }
 
 export function Sidebar({
@@ -28,6 +29,7 @@ export function Sidebar({
   hasMore,
   lastUpdated,
   onNavigate,
+  onStatus,
 }: SidebarProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 
@@ -153,7 +155,13 @@ export function Sidebar({
       </div>
 
       <div className="side-foot">
-        <div className="health-strip" aria-hidden="true">
+        <button
+          type="button"
+          className="health-strip"
+          onClick={onStatus}
+          title="Open source status"
+          aria-label="Open source status"
+        >
           {(stats?.sources ?? []).map((source) => (
             <i
               key={source.id}
@@ -161,7 +169,7 @@ export function Sidebar({
               title={`${source.label}: ${source.status}`}
             />
           ))}
-        </div>
+        </button>
         <div className="foot-line">
           <span className="foot-dot" />
           <span>

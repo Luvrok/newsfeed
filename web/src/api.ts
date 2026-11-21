@@ -9,6 +9,8 @@ export interface Story {
   summary: string
   author: string
   image: string
+  content?: string
+  content_format?: 'html' | 'text' | ''
   published_at: string
   tags: string[]
 }
@@ -93,6 +95,10 @@ export function getFeed(params: FeedParams = {}, signal?: AbortSignal): Promise<
 
 export function getItems(ids: number[], signal?: AbortSignal): Promise<{ items: Story[] }> {
   return request<{ items: Story[] }>(`/api/v1/items?ids=${ids.slice(0, 200).join(',')}`, { signal })
+}
+
+export function getStory(id: number, signal?: AbortSignal): Promise<{ item: Story }> {
+  return request<{ item: Story }>(`/api/v1/story/${id}`, { signal })
 }
 
 export function getSources(signal?: AbortSignal): Promise<SourcesResponse> {

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -21,12 +22,24 @@ import (
 var ErrNotModified = errors.New("not modified")
 
 // Client builds a keep-alive client with sane timeouts for feed polling.
-func Client(timeout time.Duration, userAgent string) *http.Client {
+// An explicit proxy overrides HTTP_PROXY / HTTPS_PROXY for this client only.
+func Client(timeout time.Duration, userAgent, proxy string) *http.Client {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
+	proxyFunc := http.ProxyFromEnvironment
+	if proxy = strings.TrimSpace(proxy); proxy != "" {
+		parsed, err := url.Parse(proxy)
+		if err != nil {
+			proxyFunc = func(*http.Request) (*url.URL, error) {
+				return nil, fmt.Errorf("invalid proxy %q: %w", proxy, err)
+			}
+		} else {
+			proxyFunc = http.ProxyURL(parsed)
+		}
+	}
 	transport := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
+		Proxy:                 proxyFunc,
 		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 		MaxIdleConns:          64,
 		MaxIdleConnsPerHost:   8,

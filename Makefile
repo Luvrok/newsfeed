@@ -1,6 +1,6 @@
 VERSION := $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 
-.PHONY: build run dev fetch web fmt vet test clean
+.PHONY: build run fetch web fmt vet test clean
 
 build: web
 	go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o bin/newsd ./cmd/newsd

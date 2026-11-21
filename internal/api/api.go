@@ -2,8 +2,10 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,12 +13,15 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"newsfeed/internal/config"
+	"newsfeed/internal/content"
 	"newsfeed/internal/ingest"
 	"newsfeed/internal/model"
+	"newsfeed/internal/source/httpx"
 	"newsfeed/internal/store"
 )
 
@@ -30,11 +35,45 @@ type Server struct {
 	started time.Time
 
 	lastRefresh atomic.Int64
+
+	imageDir    string
+	imageClient *http.Client
+	imageLocks  sync.Map
 }
 
 // New builds the HTTP layer.
 func New(cfg *config.Config, st *store.Store, sched *ingest.Scheduler, log *slog.Logger, version string) *Server {
-	return &Server{cfg: cfg, store: st, sched: sched, log: log, version: version, started: time.Now()}
+	imageProxy := cfg.Fetch.Proxy
+	if imageProxy == "" {
+		// A Telegram-only tunnel is a common setup; images should follow the
+		// first source proxy when no global one is configured.
+		for _, src := range cfg.Sources {
+			if !src.IsEnabled() {
+				continue
+			}
+			if proxy, ok := src.Options["proxy"].(string); ok && strings.TrimSpace(proxy) != "" {
+				imageProxy = proxy
+				break
+			}
+		}
+	}
+	s := &Server{
+		cfg:         cfg,
+		store:       st,
+		sched:       sched,
+		log:         log,
+		version:     version,
+		started:     time.Now(),
+		imageDir:    cfg.Server.ImageCache,
+		imageClient: httpx.Client(20*time.Second, "newsfeed/0.1 (+image proxy)", imageProxy),
+	}
+	if s.imageDir != "" {
+		if err := os.MkdirAll(s.imageDir, 0o755); err != nil {
+			log.Error("image cache directory", "dir", s.imageDir, "err", err)
+			s.imageDir = ""
+		}
+	}
+	return s
 }
 
 // Handler returns the full router with middleware applied.
@@ -43,6 +82,8 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/v1/feed", s.handleFeed)
 	mux.HandleFunc("GET /api/v1/items", s.handleItems)
+	mux.HandleFunc("GET /api/v1/story/{id}", s.handleStory)
+	mux.HandleFunc("GET /api/v1/image", s.handleImage)
 	mux.HandleFunc("GET /api/v1/sources", s.handleSources)
 	mux.HandleFunc("POST /api/v1/refresh", s.handleRefresh)
 	mux.HandleFunc("POST /api/v1/sources/{id}/refresh", s.handleRefreshOne)
@@ -128,6 +169,9 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not read the feed")
 		return
 	}
+	for i := range items {
+		items[i].Image = content.ImageURL(items[i].Image, 640)
+	}
 	next := ""
 	if hasMore && len(items) > 0 {
 		last := items[len(items)-1]
@@ -168,7 +212,30 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not read the items")
 		return
 	}
+	for i := range items {
+		items[i].Image = content.ImageURL(items[i].Image, 640)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) handleStory(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusBadRequest, "bad story id")
+		return
+	}
+	item, err := s.store.ByID(r.Context(), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "story not found")
+		return
+	}
+	if err != nil {
+		s.log.Error("story", "id", id, "err", err)
+		writeError(w, http.StatusInternalServerError, "could not read the story")
+		return
+	}
+	item.Image = content.ImageURL(item.Image, 1600)
+	writeJSON(w, http.StatusOK, map[string]any{"item": item})
 }
 
 func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {

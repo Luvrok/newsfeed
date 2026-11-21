@@ -69,43 +69,32 @@ func Open(path string) (*Store, error) {
 	return st, nil
 }
 
-// migrate adds lowercase search columns to databases created before they
-// existed. New databases get them from schema.sql.
+// migrate adds columns introduced after the first schema version. New
+// databases get everything from schema.sql.
 func (s *Store) migrate(ctx context.Context) error {
-	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(items)`)
+	cols, err := s.columns(ctx, "items")
 	if err != nil {
 		return err
 	}
-	hasLower := false
-	for rows.Next() {
-		var (
-			cid     int
-			name    string
-			ctype   string
-			notNull int
-			dflt    sql.NullString
-			pk      int
-		)
-		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
-			rows.Close()
+	added := map[string]bool{}
+	for _, col := range []struct{ name, ddl string }{
+		{"title_lc", `ALTER TABLE items ADD COLUMN title_lc TEXT NOT NULL DEFAULT ''`},
+		{"summary_lc", `ALTER TABLE items ADD COLUMN summary_lc TEXT NOT NULL DEFAULT ''`},
+		{"content", `ALTER TABLE items ADD COLUMN content TEXT NOT NULL DEFAULT ''`},
+		{"content_format", `ALTER TABLE items ADD COLUMN content_format TEXT NOT NULL DEFAULT ''`},
+	} {
+		if cols[col.name] {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, col.ddl); err != nil {
 			return err
 		}
-		if name == "title_lc" {
-			hasLower = true
-		}
+		added[col.name] = true
 	}
-	rows.Close()
-	if hasLower {
+	if !added["title_lc"] && !added["summary_lc"] {
 		return nil
 	}
-	for _, stmt := range []string{
-		`ALTER TABLE items ADD COLUMN title_lc TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE items ADD COLUMN summary_lc TEXT NOT NULL DEFAULT ''`,
-	} {
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
-			return err
-		}
-	}
+
 	type row struct {
 		id      int64
 		title   string
@@ -146,6 +135,30 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 	}
 	return tx.Commit()
+}
+
+func (s *Store) columns(ctx context.Context, table string) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var (
+			cid     int
+			name    string
+			ctype   string
+			notNull int
+			dflt    sql.NullString
+			pk      int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
+			return nil, err
+		}
+		out[name] = true
+	}
+	return out, rows.Err()
 }
 
 // Close releases the database.
@@ -227,13 +240,24 @@ func (s *Store) InsertItems(ctx context.Context, sourceID string, items []model.
 
 	insert, err := tx.PrepareContext(ctx, `
 		INSERT INTO items
-			(source_id, external_id, url, url_hash, title, title_lc, title_hash, summary, summary_lc, author, image, published_at, fetched_at, tags)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			(source_id, external_id, url, url_hash, title, title_lc, title_hash, summary, summary_lc, author, image, content, content_format, published_at, fetched_at, tags)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT DO NOTHING`)
 	if err != nil {
 		return 0, err
 	}
 	defer insert.Close()
+
+	backfill, err := tx.PrepareContext(ctx, `
+		UPDATE items
+		SET content = CASE WHEN content = '' THEN ? ELSE content END,
+		    content_format = CASE WHEN content_format = '' THEN ? ELSE content_format END,
+		    image = CASE WHEN image = '' THEN ? ELSE image END
+		WHERE url_hash = ? AND (content = '' OR image = '')`)
+	if err != nil {
+		return 0, err
+	}
+	defer backfill.Close()
 
 	titleSeen, err := tx.PrepareContext(ctx, `
 		SELECT 1 FROM items
@@ -286,6 +310,8 @@ func (s *Store) InsertItems(ctx context.Context, sourceID string, items []model.
 			strings.ToLower(summary),
 			strings.TrimSpace(it.Author),
 			strings.TrimSpace(it.Image),
+			it.Content,
+			it.ContentFormat,
 			published.Unix(),
 			now.Unix(),
 			string(tags),
@@ -295,6 +321,10 @@ func (s *Store) InsertItems(ctx context.Context, sourceID string, items []model.
 		}
 		if n, _ := res.RowsAffected(); n > 0 {
 			newCount++
+		} else if it.Content != "" || it.Image != "" {
+			if _, err := backfill.ExecContext(ctx, it.Content, it.ContentFormat, it.Image, digest(link)); err != nil {
+				return newCount, err
+			}
 		}
 	}
 	return newCount, tx.Commit()
@@ -381,6 +411,33 @@ func (s *Store) ByIDs(ctx context.Context, ids []int64) ([]model.FeedItem, error
 	}
 	defer rows.Close()
 	return scanFeed(rows, len(ids))
+}
+
+const storySelect = `
+	SELECT i.id, i.source_id, s.label, s.kind, s.grp, i.url, i.title, i.summary, i.author, i.image, i.published_at, i.tags, i.content, i.content_format
+	FROM items i
+	JOIN sources s ON s.id = i.source_id`
+
+// ByID returns one story with the article body stored at ingestion time.
+func (s *Store) ByID(ctx context.Context, id int64) (model.FeedItem, error) {
+	var (
+		it   model.FeedItem
+		tags string
+		ts   int64
+	)
+	err := s.db.QueryRowContext(ctx, storySelect+` WHERE i.id = ?`, id).Scan(
+		&it.ID, &it.SourceID, &it.Source, &it.Kind, &it.Group, &it.URL, &it.Title,
+		&it.Summary, &it.Author, &it.Image, &ts, &tags, &it.Content, &it.ContentFormat,
+	)
+	if err != nil {
+		return it, err
+	}
+	it.PublishedAt = time.Unix(ts, 0).UTC()
+	_ = json.Unmarshal([]byte(tags), &it.Tags)
+	if it.Tags == nil {
+		it.Tags = []string{}
+	}
+	return it, nil
 }
 
 func scanFeed(rows *sql.Rows, capacity int) ([]model.FeedItem, error) {

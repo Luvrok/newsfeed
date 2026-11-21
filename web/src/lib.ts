@@ -1,18 +1,26 @@
 import type { Story } from './api'
 
-export const KIND_META: Record<string, { label: string; color: string }> = {
-  rss: { label: 'RSS', color: '#6ea8fe' },
-  telegram: { label: 'Telegram', color: '#58b8e8' },
-  hackernews: { label: 'Hacker News', color: '#ff7a45' },
-  lobsters: { label: 'Lobsters', color: '#e15a5a' },
-  mastodon: { label: 'Mastodon', color: '#a78bfa' },
-  usgs: { label: 'USGS', color: '#e8b44a' },
-  github: { label: 'GitHub', color: '#9aa0a6' },
-  gdelt: { label: 'GDELT', color: '#4ec9b0' },
+export const KIND_META: Record<string, { label: string }> = {
+  rss: { label: 'RSS' },
+  telegram: { label: 'Telegram' },
+  hackernews: { label: 'Hacker News' },
+  lobsters: { label: 'Lobsters' },
+  mastodon: { label: 'Mastodon' },
+  usgs: { label: 'USGS' },
+  github: { label: 'GitHub' },
+  gdelt: { label: 'GDELT' },
+  reddit: { label: 'Reddit' },
 }
 
 export function kindColor(kind: string): string {
-  return KIND_META[kind]?.color ?? '#8b929c'
+  return `var(--kind-${kind}, var(--text-3))`
+}
+
+export function intervalLabel(seconds: number): string {
+  if (!seconds || seconds <= 0) return 'manual'
+  if (seconds % 3600 === 0) return `${seconds / 3600}h`
+  if (seconds % 60 === 0) return `${seconds / 60}m`
+  return `${seconds}s`
 }
 
 export function kindLabel(kind: string): string {
@@ -49,6 +57,7 @@ const fullDate = new Intl.DateTimeFormat(undefined, {
   year: 'numeric',
   hour: '2-digit',
   minute: '2-digit',
+  hour12: false,
 })
 
 export function formatClock(iso: string): string {

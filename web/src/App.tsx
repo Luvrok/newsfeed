@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { getItems, triggerRefresh, type Story } from './api'
-import { BrandMark, IconClose, IconRefresh } from './components/Icons'
+import { getItems, refreshSource, triggerRefresh, type Story } from './api'
+import { BrandMark, IconArrow, IconClose, IconRefresh } from './components/Icons'
 import { Header } from './components/Header'
 import { RightRail } from './components/RightRail'
 import { Shortcuts } from './components/Shortcuts'
 import { Sidebar } from './components/Sidebar'
+import { StatusPanel } from './components/StatusPanel'
 import { StoryList } from './components/StoryList'
+import { StoryPage } from './components/StoryPage'
 import { useDebounced, useFeed, useLocalStorageSet, useNow, useSources } from './hooks'
 import { dedupe, formatClock, plural, sortStories } from './lib'
 import type { Tab, Theme } from './types'
@@ -33,6 +35,13 @@ function initialSources(): Set<string> {
   return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean))
 }
 
+function storyIdFromPath(): number | null {
+  const match = window.location.pathname.match(/^\/story\/(\d+)\/?$/)
+  if (!match) return null
+  const id = Number(match[1])
+  return Number.isFinite(id) && id > 0 ? id : null
+}
+
 export default function App() {
   const now = useNow(30_000)
   const [theme, setTheme] = useState<Theme>(() => {
@@ -49,9 +58,16 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null)
   const [focus, setFocus] = useState(-1)
   const [savedExtra, setSavedExtra] = useState<Story[]>([])
+  const [storyId, setStoryId] = useState<number | null>(() => storyIdFromPath())
+  const [statusOpen, setStatusOpen] = useState(
+    () => new URLSearchParams(window.location.search).has('status'),
+  )
+  const [refreshingSource, setRefreshingSource] = useState<string | null>(null)
 
   const searchRef = useRef<HTMLInputElement>(null)
   const refreshingRef = useRef(false)
+  const openedFromFeed = useRef(false)
+  const feedScroll = useRef(0)
 
   const query = useDebounced(search, 280).trim()
   const sourceParam = useMemo(() => [...selected].sort().join(','), [selected])
@@ -64,7 +80,7 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     const meta = document.querySelector('meta[name="theme-color"]')
-    if (meta) meta.setAttribute('content', theme === 'dark' ? '#08090a' : '#f5f1e8')
+    if (meta) meta.setAttribute('content', theme === 'dark' ? '#282828' : '#fbf1c7')
     try {
       localStorage.setItem('dispatch.theme', theme)
     } catch {
@@ -73,19 +89,43 @@ export default function App() {
   }, [theme])
 
   useEffect(() => {
+    if (storyId !== null) return
     const params = new URLSearchParams()
     if (tab !== 'all') params.set('tab', tab)
     if (query) params.set('q', query)
     if (selected.size > 0) params.set('source', [...selected].sort().join(','))
     const qs = params.toString()
     history.replaceState(null, '', qs ? `?${qs}` : window.location.pathname)
-  }, [tab, query, selected])
+  }, [tab, query, selected, storyId])
+
+  useEffect(() => {
+    const onPop = () => {
+      const next = storyIdFromPath()
+      setStoryId(next)
+      if (next === null) {
+        const top = feedScroll.current
+        requestAnimationFrame(() => window.scrollTo(0, top))
+      } else {
+        window.scrollTo(0, 0)
+      }
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
 
   useEffect(() => {
     if (!notice) return
     const id = window.setTimeout(() => setNotice(null), 6000)
     return () => window.clearTimeout(id)
   }, [notice])
+
+  useEffect(() => {
+    const locked = statusOpen || drawer || shortcuts
+    document.body.style.overflow = locked ? 'hidden' : ''
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [statusOpen, drawer, shortcuts])
 
   useEffect(() => {
     setFocus(-1)
@@ -111,11 +151,27 @@ export default function App() {
 
   const openStory = useCallback(
     (story: Story) => {
+      if (storyId === null) {
+        feedScroll.current = window.scrollY
+        openedFromFeed.current = true
+      }
       read.add(story.id)
-      window.open(story.url, '_blank', 'noopener,noreferrer')
+      history.pushState({ story: story.id }, '', `/story/${story.id}`)
+      setStoryId(story.id)
+      window.scrollTo(0, 0)
     },
-    [read.add],
+    [read.add, storyId],
   )
+
+  const closeStory = useCallback(() => {
+    if (openedFromFeed.current) {
+      history.back()
+      return
+    }
+    history.pushState({}, '', '/')
+    setStoryId(null)
+    window.scrollTo(0, 0)
+  }, [])
 
   const toggleSave = useCallback(
     (story: Story) => {
@@ -200,6 +256,30 @@ export default function App() {
     }
   }, [tab, feed.loading, feed.loadingMore, feed.hasMore, counts.unread, feed.loadMore])
 
+  const refreshOne = useCallback(
+    async (id: string) => {
+      if (refreshingSource) return
+      setRefreshingSource(id)
+      try {
+        await refreshSource(id)
+        await new Promise((resolve) => window.setTimeout(resolve, 1100))
+        await reloadStats()
+      } catch (err) {
+        const status = (err as Error & { status?: number }).status
+        setNotice(
+          status === 409
+            ? 'That source is already fetching.'
+            : err instanceof Error
+              ? err.message
+              : 'Could not refresh that source',
+        )
+      } finally {
+        setRefreshingSource(null)
+      }
+    },
+    [refreshingSource, reloadStats],
+  )
+
   const goHome = useCallback(() => {
     setSearch('')
     setSelected(new Set())
@@ -223,13 +303,26 @@ export default function App() {
         return
       }
 
+      // The reading view has its own keyboard handling. Do not let the hidden
+      // feed list react to the same key press (double save, double open).
+      if (storyId !== null) return
+
+      if (statusOpen || shortcuts || drawer) {
+        if (event.key === 'Escape') {
+          setStatusOpen(false)
+          setShortcuts(false)
+          setDrawer(false)
+        }
+        return
+      }
+
       if (event.metaKey || event.ctrlKey) {
-        if (event.key.toLowerCase() === 'k') {
+        if (event.key.toLowerCase() === 'k' || event.code === 'KeyK') {
           event.preventDefault()
           searchRef.current?.focus()
           searchRef.current?.select()
         }
-        if (event.key.toLowerCase() === 'r') {
+        if (event.key.toLowerCase() === 'r' || event.code === 'KeyR') {
           event.preventDefault()
           void refresh()
         }
@@ -237,17 +330,24 @@ export default function App() {
       }
       if (event.altKey) return
 
-      switch (event.key) {
-        case 'j':
+      // event.code keeps shortcuts working on non-Latin keyboard layouts,
+      // where the physical J key produces "о" instead of "j".
+      const key = event.key
+      const code = event.code
+      const letter = (value: string) => key === value || code === `Key${value.toUpperCase()}`
+
+      switch (true) {
+        case letter('j'):
           event.preventDefault()
-          setFocus((current) => (visible.length === 0 ? -1 : Math.min(visible.length - 1, current + 1)))
+          setFocus((current) =>
+            visible.length === 0 ? -1 : Math.min(visible.length - 1, current + 1),
+          )
           break
-        case 'k':
+        case letter('k'):
           event.preventDefault()
           setFocus((current) => (current <= 0 ? 0 : current - 1))
           break
-        case 'Enter':
-        case 'o': {
+        case key === 'Enter' || letter('o'): {
           const story = visible[focus]
           if (story) {
             event.preventDefault()
@@ -255,7 +355,7 @@ export default function App() {
           }
           break
         }
-        case 's': {
+        case letter('s'): {
           const story = visible[focus]
           if (story) {
             event.preventDefault()
@@ -263,20 +363,20 @@ export default function App() {
           }
           break
         }
-        case '/':
+        case (code === 'Slash' && !event.shiftKey) || key === '/':
           event.preventDefault()
           searchRef.current?.focus()
           searchRef.current?.select()
           break
-        case 'r':
+        case letter('r'):
           event.preventDefault()
           void refresh()
           break
-        case '?':
+        case key === '?' || (event.shiftKey && (code === 'Slash' || code === 'Digit7')):
           event.preventDefault()
           setShortcuts((value) => !value)
           break
-        case 'Escape':
+        case key === 'Escape':
           setShortcuts(false)
           setDrawer(false)
           setFocus(-1)
@@ -285,7 +385,7 @@ export default function App() {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [visible, focus, openStory, toggleSave, refresh])
+  }, [visible, focus, openStory, toggleSave, refresh, statusOpen, shortcuts, drawer, storyId])
 
   const dateLine = useMemo(
     () =>
@@ -300,6 +400,43 @@ export default function App() {
 
   const heading = query ? 'Search' : tab === 'saved' ? 'Saved' : tab === 'unread' ? 'Unread' : 'Today'
   const showLead = tab === 'all' && !query && selected.size === 0
+  const sourcesOnline = stats ? stats.sources.filter((s) => s.status === 'ok').length : 0
+  const sourcesTotal = stats ? stats.sources.length : 0
+  const failing = stats
+    ? stats.sources.filter((s) => s.status === 'error' || s.status === 'stale').length
+    : 0
+
+  const statusPanel = (
+    <StatusPanel
+      open={statusOpen}
+      onClose={() => setStatusOpen(false)}
+      stats={stats}
+      now={now}
+      refreshingId={refreshingSource}
+      refreshingAll={refreshing}
+      onRefreshSource={(id) => void refreshOne(id)}
+      onRefreshAll={() => void refresh()}
+    />
+  )
+
+  if (storyId !== null) {
+    return (
+      <>
+        <StoryPage
+          id={storyId}
+          theme={theme}
+          onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          onBack={closeStory}
+          stats={stats}
+          onStatus={() => setStatusOpen(true)}
+          saved={saved}
+          onToggleSave={toggleSave}
+          onRead={read.add}
+        />
+        {statusPanel}
+      </>
+    )
+  }
 
   return (
     <>
@@ -311,11 +448,12 @@ export default function App() {
         onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
         onRefresh={() => void refresh()}
         refreshing={refreshing}
-        sourcesOk={stats ? stats.sources.filter((s) => s.status === 'ok').length : 0}
-        sourcesTotal={stats ? stats.sources.length : 0}
+        sourcesOk={sourcesOnline}
+        sourcesTotal={sourcesTotal}
         onMenu={() => setDrawer(true)}
         onShortcuts={() => setShortcuts(true)}
         onHome={goHome}
+        onStatus={() => setStatusOpen(true)}
       />
 
       <div className="app">
@@ -329,6 +467,7 @@ export default function App() {
           counts={counts}
           hasMore={feed.hasMore}
           lastUpdated={stats ? new Date(stats.fetched_at) : null}
+          onStatus={() => setStatusOpen(true)}
         />
 
         <main className="main">
@@ -400,6 +539,14 @@ export default function App() {
               )}
             </div>
 
+            {failing > 0 && (
+              <button className="feed-alert" onClick={() => setStatusOpen(true)}>
+                <span className="alert-mark" />
+                {failing} {plural(failing, 'source needs', 'sources need')} attention
+                <IconArrow size={13} />
+              </button>
+            )}
+
             {notice && (
               <div className="feed-banner">
                 <span>{notice}</span>
@@ -440,6 +587,7 @@ export default function App() {
               <span className="page-foot-rule" />
               <span>{stats?.version ? `engine ${stats.version}` : 'engine —'}</span>
               <span className="page-foot-gap" />
+              <span>j/k move · o open · s save</span>
               <span>Read state and bookmarks stay in this browser.</span>
             </footer>
           </div>
@@ -474,12 +622,17 @@ export default function App() {
               hasMore={feed.hasMore}
               lastUpdated={stats ? new Date(stats.fetched_at) : null}
               onNavigate={() => setDrawer(false)}
+              onStatus={() => {
+                setDrawer(false)
+                setStatusOpen(true)
+              }}
             />
           </div>
         </div>
       )}
 
       <Shortcuts open={shortcuts} onClose={() => setShortcuts(false)} />
+      {statusPanel}
     </>
   )
 }

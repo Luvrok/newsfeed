@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"newsfeed/internal/content"
 	"newsfeed/internal/model"
 	"newsfeed/internal/source"
 	"newsfeed/internal/source/httpx"
@@ -46,7 +47,7 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 		return nil, fmt.Errorf("mastodon: options.tag is required (a hashtag or \"local\")")
 	}
 
-	client := httpx.Client(20*time.Second, "newsfeed/0.1 (+mastodon)")
+	client := httpx.Client(20*time.Second, "newsfeed/0.1 (+mastodon)", opts.String("proxy", ""))
 	var raw []status
 	if _, err := httpx.GetJSON(ctx, client, endpoint, &raw); err != nil {
 		return nil, fmt.Errorf("mastodon/%s: %w", instance, err)
@@ -84,15 +85,22 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 		if published.IsZero() {
 			published = time.Now()
 		}
+		body := content.SanitizeHTML(s.Content, s.URL)
+		bodyFormat := ""
+		if body != "" {
+			bodyFormat = "html"
+		}
 		out = append(out, model.Item{
-			ExternalID: s.ID,
-			URL:        s.URL,
-			Title:      title,
-			Summary:    summary,
-			Author:     "@" + s.Account.Acct,
-			Image:      image,
-			Published:  published,
-			Tags:       tags,
+			ExternalID:    s.ID,
+			URL:           s.URL,
+			Title:         title,
+			Summary:       summary,
+			Author:        "@" + s.Account.Acct,
+			Image:         image,
+			Content:       body,
+			ContentFormat: bodyFormat,
+			Published:     published,
+			Tags:          tags,
 		})
 	}
 	return out, nil

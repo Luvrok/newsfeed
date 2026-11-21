@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -38,6 +39,7 @@ type Config struct {
 type Server struct {
 	Addr          string `toml:"addr"`
 	WebDir        string `toml:"web_dir"`
+	ImageCache    string `toml:"image_cache"`
 	AllowedOrigin string `toml:"allowed_origin"`
 }
 
@@ -51,6 +53,7 @@ type Fetch struct {
 	RetentionDays int      `toml:"retention_days"`
 	Workers       int      `toml:"workers"`
 	UserAgent     string   `toml:"user_agent"`
+	Proxy         string   `toml:"proxy"`
 }
 
 // Source is one subscription.
@@ -72,8 +75,9 @@ func (s Source) IsEnabled() bool { return s.Enabled == nil || *s.Enabled }
 func Load(path string) (*Config, error) {
 	cfg := &Config{
 		Server: Server{
-			Addr:   "127.0.0.1:8787",
-			WebDir: "web/dist",
+			Addr:       "127.0.0.1:8787",
+			WebDir:     "web/dist",
+			ImageCache: "data/images",
 		},
 		Database: Database{Path: "data/newsfeed.db"},
 		Fetch: Fetch{
@@ -98,6 +102,9 @@ func (c *Config) normalize() error {
 	if c.Server.Addr == "" {
 		c.Server.Addr = "127.0.0.1:8787"
 	}
+	if c.Server.ImageCache == "" {
+		c.Server.ImageCache = "data/images"
+	}
 	if c.Database.Path == "" {
 		c.Database.Path = "data/newsfeed.db"
 	}
@@ -115,6 +122,9 @@ func (c *Config) normalize() error {
 	}
 	if c.Fetch.UserAgent == "" {
 		c.Fetch.UserAgent = "newsfeed/0.1"
+	}
+	if c.Fetch.Proxy == "" {
+		c.Fetch.Proxy = strings.TrimSpace(os.Getenv("NEWSFEED_PROXY"))
 	}
 
 	seen := map[string]bool{}

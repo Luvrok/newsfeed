@@ -29,6 +29,9 @@ func NewJobs(cfg *config.Config) ([]*Job, error) {
 		if !sc.IsEnabled() {
 			continue
 		}
+		if cfg.Fetch.Proxy != "" && sc.Options["proxy"] == nil {
+			sc.Options["proxy"] = cfg.Fetch.Proxy
+		}
 		f, err := source.New(sc.Kind)
 		if err != nil {
 			return nil, fmt.Errorf("source %q: %w", sc.ID, err)

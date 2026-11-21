@@ -55,7 +55,7 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 	q.Set("timespan", timespan)
 	endpoint := "https://api.gdeltproject.org/api/v2/doc/doc?" + q.Encode()
 
-	client := httpx.Client(30*time.Second, "newsfeed/0.1 (+gdelt)")
+	client := httpx.Client(30*time.Second, "newsfeed/0.1 (+gdelt)", opts.String("proxy", ""))
 	body, _, err := httpx.Get(ctx, client, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("gdelt: %w", err)

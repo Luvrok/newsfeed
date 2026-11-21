@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/mmcdole/gofeed v1.5.0
+	golang.org/x/image v0.48.0
 	golang.org/x/net v0.63.0
 	modernc.org/sqlite v1.62.0
 )

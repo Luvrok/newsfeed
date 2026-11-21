@@ -46,7 +46,7 @@ export function Shortcuts({ open, onClose }: ShortcutsProps) {
             </div>
           ))}
         </div>
-        <p className="sheet-foot">The list follows the keyboard focus. Stories open in a new tab.</p>
+        <p className="sheet-foot">The list follows the keyboard focus. Stories open in the reading view; the original link is one click away.</p>
       </div>
     </div>
   )

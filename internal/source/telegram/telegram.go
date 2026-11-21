@@ -32,7 +32,8 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 		return nil, fmt.Errorf("telegram: options.channels is required")
 	}
 	limit := opts.Int("limit", 20)
-	client := httpx.Client(20*time.Second, "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36")
+	skip := opts.Strings("skip")
+	client := httpx.Client(20*time.Second, "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36", opts.String("proxy", ""))
 
 	var (
 		out  []model.Item
@@ -43,7 +44,7 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 		if channel == "" {
 			continue
 		}
-		items, err := fetchChannel(ctx, client, channel, limit)
+		items, err := fetchChannel(ctx, client, channel, limit, skip)
 		if err != nil {
 			errs = append(errs, err.Error())
 			continue
@@ -56,7 +57,7 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 	return out, nil
 }
 
-func fetchChannel(ctx context.Context, client *http.Client, channel string, limit int) ([]model.Item, error) {
+func fetchChannel(ctx context.Context, client *http.Client, channel string, limit int, skip []string) ([]model.Item, error) {
 	url := "https://t.me/s/" + channel
 	body, _, err := httpx.Get(ctx, client, url, http.Header{"Accept": {"text/html"}})
 	if err != nil {
@@ -89,7 +90,7 @@ func fetchChannel(ctx context.Context, client *http.Client, channel string, limi
 			return
 		}
 		text := nodeText(textNode)
-		if text == "" {
+		if text == "" || containsAny(text, skip) {
 			return
 		}
 
@@ -114,16 +115,31 @@ func fetchChannel(ctx context.Context, client *http.Client, channel string, limi
 			}
 		}
 
-		title, summary := split(text)
+		cleaned := cleanText(text)
+		if cleaned == "" {
+			return
+		}
+		title, summary := split(cleaned)
+		body := cleaned
+		if _, rest, ok := strings.Cut(cleaned, "\n"); ok {
+			body = strings.TrimSpace(rest)
+		}
+		bodyFormat := "text"
+		if body == "" || body == title {
+			body = ""
+			bodyFormat = ""
+		}
 		out = append(out, model.Item{
-			ExternalID: post,
-			URL:        "https://t.me/" + post,
-			Title:      title,
-			Summary:    summary,
-			Author:     channelTitle,
-			Image:      image,
-			Published:  published,
-			Tags:       tags,
+			ExternalID:    post,
+			URL:           "https://t.me/" + post,
+			Title:         title,
+			Summary:       summary,
+			Author:        channelTitle,
+			Image:         image,
+			Content:       body,
+			ContentFormat: bodyFormat,
+			Published:     published,
+			Tags:          tags,
 		})
 	})
 
@@ -135,9 +151,9 @@ func fetchChannel(ctx context.Context, client *http.Client, channel string, limi
 
 var cta = regexp.MustCompile(`(?i)^(подпишись|подписывайтесь|подписаться|читайте|следите|subscribe|follow us|join us)`)
 
-// split makes the first line a headline and keeps the rest as a summary,
-// dropping the channel's call-to-action tail.
-func split(text string) (string, string) {
+// cleanText drops the channel's call-to-action tail before the post is
+// stored as the article body.
+func cleanText(text string) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		line = strings.TrimLeftFunc(strings.TrimSpace(line), func(r rune) bool {
@@ -148,12 +164,42 @@ func split(text string) (string, string) {
 			break
 		}
 	}
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+// split makes the first line a headline and keeps the rest as a summary.
+func split(text string) (string, string) {
+	lines := strings.Split(text, "\n")
 	if len(lines) == 0 {
 		return "", ""
 	}
-	title := httpx.Truncate(strings.TrimSpace(lines[0]), 140)
+	title := httpx.Truncate(cleanTitle(lines[0]), 140)
 	rest := strings.TrimSpace(strings.Join(lines[1:], "\n"))
 	return title, httpx.Truncate(rest, 420)
+}
+
+// cleanTitle removes leading channel emoji and bullets such as "❗️" or "⚡"
+// while keeping an opening quote, which editors use on purpose.
+func cleanTitle(line string) string {
+	line = strings.TrimSpace(line)
+	cleaned := strings.TrimLeftFunc(line, func(r rune) bool {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return false
+		}
+		switch r {
+		case '"', '\'', '«', '»', '“', '„', '(', '[', '—', '-':
+			return false
+		}
+		return true
+	})
+	cleaned = strings.TrimSpace(cleaned)
+	if cleaned == "" {
+		return line
+	}
+	return cleaned
 }
 
 func normalizeChannel(raw string) string {
@@ -257,3 +303,13 @@ func nodeText(n *html.Node) string {
 }
 
 type fetcher struct{}
+
+func containsAny(text string, needles []string) bool {
+	text = strings.ToLower(text)
+	for _, needle := range needles {
+		if needle = strings.ToLower(strings.TrimSpace(needle)); needle != "" && strings.Contains(text, needle) {
+			return true
+		}
+	}
+	return false
+}

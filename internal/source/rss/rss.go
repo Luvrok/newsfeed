@@ -12,6 +12,7 @@ import (
 
 	"github.com/mmcdole/gofeed"
 
+	"newsfeed/internal/content"
 	"newsfeed/internal/model"
 	"newsfeed/internal/source"
 	"newsfeed/internal/source/httpx"
@@ -46,7 +47,7 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 	limit := opts.Int("limit", 25)
 	withSummary := opts.Bool("summary", true)
 
-	client := httpx.Client(20*time.Second, "newsfeed/0.1 (+rss)")
+	client := httpx.Client(20*time.Second, "newsfeed/0.1 (+rss)", opts.String("proxy", ""))
 	var (
 		items []model.Item
 		errs  []string
@@ -127,7 +128,22 @@ func (f *fetcher) fetchOne(ctx context.Context, client *http.Client, url string,
 			summary = it.Content
 		}
 		summary = httpx.Truncate(httpx.Text(summary), 380)
-		if !withSummary {
+		body, bodyFormat := "", ""
+		if withSummary {
+			rawBody := it.Content
+			if strings.TrimSpace(rawBody) == "" {
+				rawBody = it.Description
+			}
+			if strings.Contains(rawBody, "<") {
+				body = content.SanitizeHTML(rawBody, link)
+				if body != "" {
+					bodyFormat = "html"
+				}
+			} else if rawBody = strings.TrimSpace(rawBody); rawBody != "" {
+				body = rawBody
+				bodyFormat = "text"
+			}
+		} else {
 			summary = ""
 		}
 
@@ -148,14 +164,16 @@ func (f *fetcher) fetchOne(ctx context.Context, client *http.Client, url string,
 		}
 
 		out = append(out, model.Item{
-			ExternalID: firstNonEmpty(it.GUID, link),
-			URL:        link,
-			Title:      httpx.Truncate(title, 240),
-			Summary:    summary,
-			Author:     author,
-			Image:      imageOf(it),
-			Published:  published,
-			Tags:       dedupe(tags),
+			ExternalID:    firstNonEmpty(it.GUID, link),
+			URL:           link,
+			Title:         httpx.Truncate(title, 240),
+			Summary:       summary,
+			Author:        author,
+			Image:         imageOf(it),
+			Content:       body,
+			ContentFormat: bodyFormat,
+			Published:     published,
+			Tags:          dedupe(tags),
 		})
 		if len(out) >= limit {
 			break

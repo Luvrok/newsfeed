@@ -8,6 +8,7 @@
 [server]
 addr = "127.0.0.1:8787"
 web_dir = "web/dist"
+image_cache = "data/images"
 # "*" opens CORS to every origin; empty allows only localhost dev ports.
 allowed_origin = ""
 
@@ -20,6 +21,10 @@ workers = 8
 max_items = 300      # hard cap per source per poll
 retention_days = 30  # older items are pruned every 6 hours
 user_agent = "newsfeed/0.1 (+https://github.com/barnard/newsfeed)"
+# Global proxy for every source, e.g. "socks5://127.0.0.1:1080" or
+# "http://127.0.0.1:8080". Empty means the process environment
+# (HTTP_PROXY / HTTPS_PROXY) or a direct connection, in that order.
+proxy = ""
 
 # ---------------------------------------------------------------------------
 # World news — RSS
@@ -93,6 +98,20 @@ limit = 25
 
 # Google News is a free official aggregator: one feed covers hundreds of
 # outlets. The article links point at Google's redirector.
+# Reuters has no free official feed any more. Google News indexes the site
+# for free and gives one stable RSS endpoint; links open the original article.
+[[sources]]
+id = "reuters"
+kind = "rss"
+label = "Reuters"
+site = "https://www.reuters.com"
+group = "world"
+interval = "15m"
+[sources.options]
+url = "https://news.google.com/rss/search?q=site:reuters.com&hl=en-US&gl=US&ceid=US:en"
+limit = 25
+summary = false
+
 [[sources]]
 id = "google-news"
 kind = "rss"
@@ -222,6 +241,9 @@ interval = "5m"
 [sources.options]
 channels = ["tass_agency"]
 limit = 20
+# per-source override for the global [fetch].proxy, useful when only
+# Telegram needs a tunnel:
+# proxy = "socks5://127.0.0.1:1080"
 
 [[sources]]
 id = "tg-bbc-russian"
@@ -255,6 +277,19 @@ interval = "15m"
 [sources.options]
 channels = ["nplus1"]
 limit = 15
+
+# Ateo Breaking is a fast Russian wire; sponsored posts are filtered by phrase.
+[[sources]]
+id = "tg-ateo"
+kind = "telegram"
+label = "Ateo Breaking"
+site = "https://t.me/ateobreaking"
+group = "russia"
+interval = "5m"
+[sources.options]
+channels = ["ateobreaking"]
+limit = 20
+skip = ["спонсор показа", "Durev VPN", "erid"]
 
 [[sources]]
 id = "meduza-en"
@@ -298,6 +333,24 @@ limit = 30
 # ---------------------------------------------------------------------------
 # Official feeds — government and platform APIs
 # ---------------------------------------------------------------------------
+
+# Reddit needs a free "script" app: reddit.com/prefs/apps. Put its id and
+# secret in REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET (or in the options) and
+# flip enabled to true. Official OAuth API, no scraping.
+[[sources]]
+id = "reddit"
+kind = "reddit"
+label = "Reddit"
+site = "https://www.reddit.com"
+group = "social"
+interval = "15m"
+enabled = false
+[sources.options]
+subreddits = ["golang", "nixos", "worldnews"]
+sort = "hot"
+limit = 25
+# client_id = "..."
+# client_secret = "..."
 
 [[sources]]
 id = "usgs-quakes"

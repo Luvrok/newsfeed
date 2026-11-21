@@ -136,3 +136,27 @@ func TestFeedPagination(t *testing.T) {
 		t.Fatalf("unexpected third page: %+v hasMore=%v", third, hasMore)
 	}
 }
+
+func TestByIDReturnsContent(t *testing.T) {
+	st := testStore(t)
+	ctx := context.Background()
+	now := time.Now().Truncate(time.Second)
+	items := []model.Item{{
+		URL: "https://example.com/article", Title: "A story", Summary: "short",
+		Content: "<p>the body</p>", ContentFormat: "html", Published: now,
+	}}
+	if _, err := st.InsertItems(ctx, "a", items); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	feed, _, err := st.Feed(ctx, model.FeedQuery{Limit: 1})
+	if err != nil || len(feed) != 1 {
+		t.Fatalf("feed: %v %d", err, len(feed))
+	}
+	item, err := st.ByID(ctx, feed[0].ID)
+	if err != nil {
+		t.Fatalf("by id: %v", err)
+	}
+	if item.Content != "<p>the body</p>" || item.ContentFormat != "html" {
+		t.Fatalf("content lost: %+v", item)
+	}
+}

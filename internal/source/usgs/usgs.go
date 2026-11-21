@@ -37,7 +37,7 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 	limit := opts.Int("limit", 30)
 	endpoint := fmt.Sprintf("https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/%s_%s.geojson", feed, period)
 
-	client := httpx.Client(25*time.Second, "newsfeed/0.1 (+usgs)")
+	client := httpx.Client(25*time.Second, "newsfeed/0.1 (+usgs)", opts.String("proxy", ""))
 	var data featureCollection
 	if _, err := httpx.GetJSON(ctx, client, endpoint, &data); err != nil {
 		return nil, fmt.Errorf("usgs: %w", err)

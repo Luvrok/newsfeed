@@ -8,6 +8,7 @@ import (
 	_ "newsfeed/internal/source/hackernews"
 	_ "newsfeed/internal/source/lobsters"
 	_ "newsfeed/internal/source/mastodon"
+	_ "newsfeed/internal/source/reddit"
 	_ "newsfeed/internal/source/rss"
 	_ "newsfeed/internal/source/telegram"
 	_ "newsfeed/internal/source/usgs"

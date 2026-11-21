@@ -28,7 +28,7 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 	}
 	limit := opts.Int("limit", 30)
 
-	client := httpx.Client(20*time.Second, "newsfeed/0.1 (+lobsters)")
+	client := httpx.Client(20*time.Second, "newsfeed/0.1 (+lobsters)", opts.String("proxy", ""))
 	var raw []story
 	if _, err := httpx.GetJSON(ctx, client, url, &raw); err != nil {
 		return nil, fmt.Errorf("lobsters: %w", err)
@@ -60,14 +60,21 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 		if s.CommentCount > 0 {
 			tags = append(tags, fmt.Sprintf("%d %s", s.CommentCount, plural(s.CommentCount, "comment", "comments")))
 		}
+		body := httpx.Text(s.Description)
+		bodyFormat := ""
+		if body != "" {
+			bodyFormat = "text"
+		}
 		out = append(out, model.Item{
-			ExternalID: s.ShortID,
-			URL:        link,
-			Title:      s.Title,
-			Summary:    httpx.Truncate(httpx.Text(s.Description), 300),
-			Author:     s.SubmitterUser,
-			Published:  published,
-			Tags:       tags,
+			ExternalID:    s.ShortID,
+			URL:           link,
+			Title:         s.Title,
+			Summary:       httpx.Truncate(body, 300),
+			Author:        s.SubmitterUser,
+			Content:       body,
+			ContentFormat: bodyFormat,
+			Published:     published,
+			Tags:          tags,
 		})
 	}
 	return out, nil

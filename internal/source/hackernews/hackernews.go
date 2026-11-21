@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"newsfeed/internal/content"
 	"newsfeed/internal/model"
 	"newsfeed/internal/source"
 	"newsfeed/internal/source/httpx"
@@ -38,7 +39,7 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 		limit = 200
 	}
 
-	client := httpx.Client(20*time.Second, "newsfeed/0.1 (+hackernews)")
+	client := httpx.Client(20*time.Second, "newsfeed/0.1 (+hackernews)", opts.String("proxy", ""))
 	ids := []int64{}
 	if _, err := httpx.GetJSON(ctx, client, endpoint, &ids); err != nil {
 		return nil, fmt.Errorf("hackernews: %w", err)
@@ -84,14 +85,21 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 		if s.Descendants > 0 {
 			tags = append(tags, fmt.Sprintf("%d %s", s.Descendants, plural(s.Descendants, "comment", "comments")))
 		}
+		body := content.SanitizeHTML(s.Text, link)
+		bodyFormat := ""
+		if body != "" {
+			bodyFormat = "html"
+		}
 		out = append(out, model.Item{
-			ExternalID: fmt.Sprint(s.ID),
-			URL:        link,
-			Title:      s.Title,
-			Summary:    httpx.Truncate(httpx.Text(s.Text), 300),
-			Author:     s.By,
-			Published:  time.Unix(s.Time, 0),
-			Tags:       tags,
+			ExternalID:    fmt.Sprint(s.ID),
+			URL:           link,
+			Title:         s.Title,
+			Summary:       httpx.Truncate(httpx.Text(s.Text), 300),
+			Author:        s.By,
+			Content:       body,
+			ContentFormat: bodyFormat,
+			Published:     time.Unix(s.Time, 0),
+			Tags:          tags,
 		})
 	}
 	return out, nil

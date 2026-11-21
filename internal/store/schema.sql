@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS items (
     summary_lc   TEXT NOT NULL DEFAULT '',
     author       TEXT NOT NULL DEFAULT '',
     image        TEXT NOT NULL DEFAULT '',
+    content      TEXT NOT NULL DEFAULT '',
+    content_format TEXT NOT NULL DEFAULT '',
     published_at INTEGER NOT NULL,
     fetched_at   INTEGER NOT NULL,
     tags         TEXT NOT NULL DEFAULT '[]'

@@ -2,7 +2,8 @@
 
 A self-hosted news collector with a fast JSON API and a quiet, editorial web reader.
 No RSS output, no accounts, no tracking: it pulls from public feeds, official APIs and
-Telegram's public preview, deduplicates the pile and serves one clean stream.
+Telegram's public preview, deduplicates the pile and serves one clean stream with an
+in-site reading view.
 
 ```
 sources (one goroutine each)  ->  SQLite  ->  /api/v1/feed  ->  React reader
@@ -18,9 +19,15 @@ sources (one goroutine each)  ->  SQLite  ->  /api/v1/feed  ->  React reader
   normalized headline seen from another source within 36 hours.
 - **Fast reads.** SQLite in WAL mode, one composite index for the feed, cursor
   pagination, parallel polling and conditional GET (`ETag` / `If-Modified-Since`) for RSS.
-- **Source health** in the API and the UI: last run, last error, duration, items, runs.
+- **Source health** in the API and the UI, with a clickable status drawer, per-source
+  retry and a banner when something goes stale. The scheduler runs without the browser.
+- **Reading view**, not redirects: the detail page shows the article text the feed or API
+  delivered. No page scraping, so publisher redesigns cannot break the reader.
+- **Image proxy** with disk cache and server-side resizing: Telegram, Reddit and CDN
+  pictures load from the local service, through the same proxy as the fetchers, even in a
+  network where the source CDN is blocked. Feed thumbs are 640 px, articles up to 1600 px.
 - **Reader state in the browser**: read marks, bookmarks, keyboard navigation, search,
-  infinite scroll, dark and light themes.
+  infinite scroll, dark and light themes in a soft Gruvbox palette with sharp corners.
 - **Single binary in production.** Go serves both the API and the built React app.
 
 ## Quick start
@@ -86,6 +93,7 @@ together with its items.
 [server]
 addr = "127.0.0.1:8787"
 web_dir = "web/dist"
+image_cache = "data/images"
 allowed_origin = ""        # empty: localhost dev only, "*": any origin
 
 [database]
@@ -97,6 +105,7 @@ workers = 8
 max_items = 300            # hard cap per source per poll
 retention_days = 30        # older items are pruned every six hours
 user_agent = "newsfeed/0.1 (+https://github.com/barnard/newsfeed)"
+proxy = ""                 # "socks5://127.0.0.1:1080"; NEWSFEED_PROXY also works
 
 [[sources]]
 id = "bbc-world"           # stable key, used by filters and state
@@ -122,7 +131,14 @@ limit = 25
 | `mastodon` | `instance`, `tag` (a hashtag or `local`), `limit` | Public instance API, no token. |
 | `usgs` | `feed` (`significant`/`4.5`/`2.5`/`1.0`/`all`), `period` (`hour`/`day`/`week`), `limit` | Official GeoJSON. |
 | `github` | `repos`, `limit`, `prerelease = false` | Public releases API, unauthenticated (60 requests/hour per IP). |
+| `reddit` | `subreddits`, `sort`, `time`, `limit`, `include_nsfw`, `include_stickied` | Official OAuth API. Needs `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET`; shipped disabled. |
 | `gdelt` | `query`, `timespan`, `max`, `language` | Free article index, but rate-limited to one request per five seconds; shipped disabled. |
+
+Any source can override the global proxy with `proxy` in its `[sources.options]`. This is
+the usual setup for Telegram in Russia: tunnel only Telegram, keep everything else direct.
+`proxy` accepts `http://`, `https://` and `socks5://` URLs. Empty means `NEWSFEED_PROXY`,
+then `HTTP_PROXY` / `HTTPS_PROXY`, then a direct connection. The image proxy follows the
+global proxy, or the first per-source proxy when only one source is tunneled.
 
 Defaults are deliberately conservative: feeds are polled every 10–30 minutes, fast wires
 (Hacker News, USGS, Telegram) every 5 minutes. Every poll runs in parallel with an
@@ -140,7 +156,8 @@ GET /api/v1/feed?limit=40&cursor=<opaque>&source=tg-tass,bbc-world&kind=rss&q=cl
 - `cursor` from the previous response's `next_cursor`
 - `source` comma-separated source ids
 - `kind` comma-separated kinds
-- `q` case-insensitive substring over title and summary
+- `q` case-insensitive substring over title and summary (Unicode-aware, so Cyrillic
+  works in any case)
 
 ```json
 {
@@ -169,6 +186,8 @@ GET /api/v1/feed?limit=40&cursor=<opaque>&source=tg-tass,bbc-world&kind=rss&q=cl
 ```http
 GET  /api/v1/sources          # totals, activity buckets, per-source health
 GET  /api/v1/items?ids=1,2,3  # restore bookmarks / specific stories by id
+GET  /api/v1/story/{id}       # full story: stored article body, image and metadata
+GET  /api/v1/image?u=…&w=640  # cached image proxy with server-side resize
 GET  /api/v1/health           # liveness and version
 POST /api/v1/refresh          # ask every source to poll now; 10 s client cooldown
 POST /api/v1/sources/{id}/refresh
@@ -236,8 +255,9 @@ the keys it needs; unknown keys are ignored.
 
 ```
 cmd/newsd/            CLI: serve, fetch, sources, version
-internal/api/         JSON API, CORS, static SPA serving
+internal/api/         JSON API, CORS, image proxy, static SPA serving
 internal/config/      TOML loading and defaults
+internal/content/     HTML sanitizer, article bodies, image proxy URLs
 internal/ingest/      scheduler, per-source goroutines, batch mode
 internal/model/       Item, FeedItem, SourceStats
 internal/source/      registry, HTTP helpers, one package per kind
@@ -255,6 +275,12 @@ indexes back the insert: the URL hash and `(source_id, external_id)`. Before ins
 store also looks for the same normalized headline from a different source in the last 36
 hours, which keeps one event from filling the stream twice without clustering.
 
+Story bodies are stored once, during ingestion: RSS `content:encoded`, Telegram post text,
+Mastodon HTML, Reddit selftext, HN comments and GitHub release notes. The sanitizer keeps a
+conservative set of tags and attributes, strips scripts/styles/iframes, resolves relative
+links, opens links in a new tab and rewrites every image through the local proxy. The feed
+payload stays small; the body is only returned by `/api/v1/story/{id}`.
+
 SQLite runs in WAL mode with a busy timeout and foreign keys. The feed query uses
 `ORDER BY published_at DESC, id DESC` and a `(published_at DESC, id DESC)` index; pagination
 is a keyset cursor, not an offset.
@@ -262,23 +288,43 @@ is a keyset cursor, not an offset.
 ## Notes and limits
 
 - **No RSS output.** RSS is an input format here. The output is the JSON API and the reader.
+- **No page scraping.** The article view is built only from what the source's feed or API
+  delivered. When a publisher ships a teaser only, the page says so and links to the
+  original. Nothing breaks when a publisher changes its markup.
 - **Telegram** uses the public web preview. Channels without a preview, private channels and
-  channels that restrict embedding will return nothing.
+  channels that restrict embedding will return nothing. Point `proxy` at a tunnel if
+  `t.me` is blocked on your network; the same client fetches channel images.
+- **Reddit** uses the official OAuth API. Create a free "script" app at
+  <https://www.reddit.com/prefs/apps>, export `REDDIT_CLIENT_ID` and
+  `REDDIT_CLIENT_SECRET`, then set `enabled = true` on the `reddit` source. The source is
+  shipped disabled so a fresh install never fails on missing credentials.
+- **Reuters** has no free official feed any more. The shipped source uses a Google News
+  RSS search restricted to `site:reuters.com`; the link opens the original article.
 - **GDELT** is shipped disabled: its API allows roughly one request per five seconds and
   bans bursts. Enable it only if you accept the pacing.
-- **Reddit** is not included: its public JSON now returns 403 and its official API needs
-  OAuth credentials. A self-hosted instance or a feed proxy can be plugged in through `rss`.
 - **X/Twitter** is intentionally absent: the official API is paid and scraping is brittle.
 - **No LLM, no clustering, no ranking.** This version is the collection and reading layer.
 - Items are pruned after `retention_days`; source health and the config remain.
 
 ## Design
 
-Dark charcoal and warm paper, Literata for headlines, Inter for the interface, JetBrains
-Mono for metadata. Fonts are self-hosted (no CDN, works offline) and licensed under the
-SIL Open Font License. The reader has a lead
-story, day groups, keyboard navigation (`j`/`k`, `o`, `s`, `/`, `r`, `?`), search, source
-filters, read marks and bookmarks in `localStorage`, and a live activity chart fed by the
-API. Screenshots: [`docs/screenshots/desktop-dark.png`](docs/screenshots/desktop-dark.png),
-[`docs/screenshots/desktop-light.png`](docs/screenshots/desktop-light.png),
-[`docs/screenshots/mobile.png`](docs/screenshots/mobile.png), [`docs/screenshots/desktop-mid.png`](docs/screenshots/desktop-mid.png).
+Soft Gruvbox dark and light, Literata for headlines, Inter for the interface, JetBrains Mono
+for metadata. Every corner is square; images use a cut bottom-right corner instead of a
+radius. Fonts are self-hosted (no CDN, works offline) and licensed under the SIL Open Font
+License. The reader has a lead story, day groups, an in-site reading view with a progress
+bar, keyboard navigation (`j`/`k`, `o`, `s`, `/`, `r`, `?`; physical keys work on Cyrillic
+layouts), search, source filters, a status drawer, read marks and bookmarks in
+`localStorage`, and a live activity chart fed by the API. The scheduler polls in the
+background: the page also refreshes its feed every 60 seconds and the status every 30
+seconds, so the refresh button is only for an immediate poll.
+
+Screenshots:
+[`desktop-dark.png`](docs/screenshots/desktop-dark.png),
+[`desktop-light.png`](docs/screenshots/desktop-light.png),
+[`mobile.png`](docs/screenshots/mobile.png),
+[`desktop-mid.png`](docs/screenshots/desktop-mid.png),
+[`article-dark.png`](docs/screenshots/article-dark.png),
+[`article-light.png`](docs/screenshots/article-light.png),
+[`article-telegram.png`](docs/screenshots/article-telegram.png),
+[`article-mobile.png`](docs/screenshots/article-mobile.png),
+[`status.png`](docs/screenshots/status.png).

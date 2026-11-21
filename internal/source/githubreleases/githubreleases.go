@@ -30,7 +30,7 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 	limit := opts.Int("limit", 3)
 	includePre := opts.Bool("prerelease", false)
 
-	client := httpx.Client(20*time.Second, "newsfeed/0.1 (+github)")
+	client := httpx.Client(20*time.Second, "newsfeed/0.1 (+github)", opts.String("proxy", ""))
 	var (
 		out  []model.Item
 		errs []string
@@ -64,14 +64,21 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 			if published.IsZero() {
 				published = r.CreatedAt
 			}
+			body := stripMarkdown(r.Body)
+			bodyFormat := ""
+			if body != "" {
+				bodyFormat = "text"
+			}
 			out = append(out, model.Item{
-				ExternalID: fmt.Sprint(r.ID),
-				URL:        r.HTMLURL,
-				Title:      httpx.Truncate(title, 200),
-				Summary:    httpx.Truncate(stripMarkdown(r.Body), 360),
-				Author:     r.Author.Login,
-				Published:  published,
-				Tags:       tags,
+				ExternalID:    fmt.Sprint(r.ID),
+				URL:           r.HTMLURL,
+				Title:         httpx.Truncate(title, 200),
+				Summary:       httpx.Truncate(body, 360),
+				Author:        r.Author.Login,
+				Content:       body,
+				ContentFormat: bodyFormat,
+				Published:     published,
+				Tags:          tags,
 			})
 		}
 	}
