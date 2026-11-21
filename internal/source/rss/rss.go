@@ -49,10 +49,11 @@ func (f *fetcher) Fetch(ctx context.Context, opts source.Options) ([]model.Item,
 
 	var include *regexp.Regexp
 	if pattern := strings.TrimSpace(opts.String("include", "")); pattern != "" {
-		include, err = regexp.Compile(pattern)
+		compiled, err := regexp.Compile(pattern)
 		if err != nil {
 			return nil, fmt.Errorf("rss: include: %w", err)
 		}
+		include = compiled
 	}
 
 	client := httpx.Client(20*time.Second, "newsfeed/0.1 (+rss)", opts.String("proxy", ""))
