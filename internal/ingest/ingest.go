@@ -319,11 +319,7 @@ func (m *Manager) run(ctx context.Context, job *Job) error {
 	}
 	defer m.end(job.Source.ID)
 
-	timeout := m.cfg.Fetch.Timeout.Std()
-	if job.Source.Kind == "reddit" {
-		timeout = 3 * time.Minute
-	}
-	fctx, cancel := context.WithTimeout(ctx, timeout)
+	fctx, cancel := context.WithTimeout(ctx, m.cfg.Fetch.Timeout.Std())
 	defer cancel()
 
 	start := time.Now()
@@ -435,11 +431,7 @@ func RunBatch(ctx context.Context, cfg *config.Config, st *store.Store, sources 
 					continue
 				}
 				opts := withProxy(cfg, src.Options)
-				timeout := cfg.Fetch.Timeout.Std()
-				if src.Kind == "reddit" {
-					timeout = 3 * time.Minute
-				}
-				fctx, cancel := context.WithTimeout(ctx, timeout)
+				fctx, cancel := context.WithTimeout(ctx, cfg.Fetch.Timeout.Std())
 				items, err := fetcher.Fetch(fctx, source.Options(opts))
 				cancel()
 				if len(items) > cfg.Fetch.MaxItems {
@@ -499,12 +491,10 @@ func minDuration(a, b time.Duration) time.Duration {
 	return b
 }
 
-// sourceHost groups sources that hit the same upstream, so a seed with eleven
-// subreddits does not start them all in the same second.
+// sourceHost groups sources that hit the same upstream, so a seed with many
+// channels or feeds on one site does not start them all in the same second.
 func sourceHost(src model.Source) string {
 	switch src.Kind {
-	case "reddit":
-		return "reddit.com"
 	case "telegram":
 		return "t.me"
 	}
@@ -527,8 +517,6 @@ func sourceHost(src model.Source) string {
 
 func hostGap(src model.Source) time.Duration {
 	switch src.Kind {
-	case "reddit":
-		return 30 * time.Second
 	case "telegram":
 		return 2 * time.Second
 	case "mastodon":

@@ -336,20 +336,6 @@ limit = 30
 # Official feeds — government and platform APIs
 # ---------------------------------------------------------------------------
 
-# Public Reddit RSS through the global proxy. No OAuth app and no credentials.
-[[sources]]
-id = "reddit"
-kind = "reddit"
-label = "Reddit"
-site = "https://www.reddit.com"
-group = "social"
-interval = "15m"
-enabled = false
-[sources.options]
-subreddits = ["golang", "nixos", "worldnews"]
-sort = "hot"
-limit = 10
-
 [[sources]]
 id = "usgs-quakes"
 kind = "usgs"

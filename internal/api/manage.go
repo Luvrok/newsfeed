@@ -461,18 +461,6 @@ func sourceKey(kind string, options map[string]any) string {
 			return ""
 		}
 		return "telegram:" + strings.ToLower(strings.TrimPrefix(strings.TrimSpace(channels[0]), "@"))
-	case "reddit":
-		subs := opts.Strings("subreddits")
-		if len(subs) == 0 {
-			if s := opts.String("subreddit", ""); s != "" {
-				subs = []string{s}
-			}
-		}
-		if len(subs) == 0 {
-			return ""
-		}
-		sort.Strings(subs)
-		return "reddit:" + strings.ToLower(strings.Join(subs, ",")) + ":" + opts.String("sort", "hot") + ":" + opts.String("time", "day")
 	case "mastodon":
 		return "mastodon:" + opts.String("instance", "") + ":" + opts.String("tag", "")
 	case "github":

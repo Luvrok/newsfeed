@@ -132,6 +132,14 @@ func New(kind string) (Fetcher, error) {
 	return f(), nil
 }
 
+// Known reports whether this build ships a fetcher for the kind.
+func Known(kind string) bool {
+	mu.RLock()
+	_, ok := factories[kind]
+	mu.RUnlock()
+	return ok
+}
+
 // Kinds lists every registered kind, sorted.
 func Kinds() []string {
 	mu.RLock()

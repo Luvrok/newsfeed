@@ -211,7 +211,7 @@ export function ManagePage({ theme, onToggleTheme, onBack, stats, onStatus, onCh
           <div className="kicker">Sources</div>
           <h1>Manage sources</h1>
           <p>
-            Add a feed, a Telegram channel or a subreddit. The scheduler starts it immediately;
+            Add a feed, a Telegram channel or a Mastodon tag. The scheduler starts it immediately;
             no config file and no restart.
           </p>
           <div className="manage-actions">
@@ -276,7 +276,7 @@ export function ManagePage({ theme, onToggleTheme, onBack, stats, onStatus, onCh
         {!loading && sources.length === 0 && (
           <div className="manage-empty">
             <b>No sources yet</b>
-            <p>Add an RSS feed, a Telegram channel or a subreddit, or import a Miniflux OPML file.</p>
+            <p>Add an RSS feed, a Telegram channel or a Mastodon tag, or import a Miniflux OPML file.</p>
           </div>
         )}
 

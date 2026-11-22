@@ -9,7 +9,6 @@ export const KIND_META: Record<string, { label: string }> = {
   usgs: { label: 'USGS' },
   github: { label: 'GitHub' },
   gdelt: { label: 'GDELT' },
-  reddit: { label: 'Reddit' },
 }
 
 export function kindColor(kind: string): string {

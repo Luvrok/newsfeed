@@ -26,7 +26,7 @@ sources (one goroutine each)  ->  SQLite  ->  /api/v1/feed  ->  React reader
   retry and a banner when something goes stale. The scheduler runs without the browser.
 - **Reading view**, not redirects: the detail page shows the article text the feed or API
   delivered. No page scraping, so publisher redesigns cannot break the reader.
-- **Image proxy** with disk cache and server-side resizing: Telegram, Reddit and CDN
+- **Image proxy** with disk cache and server-side resizing: Telegram and CDN
   pictures load from the local service, through the same proxy as the fetchers, even in a
   network where the source CDN is blocked. Feed thumbs are 640 px, articles up to 1600 px.
 - **Reader state in the browser**: read marks, bookmarks, keyboard navigation, search,
@@ -51,7 +51,7 @@ go run ./cmd/newsd fetch
 go run ./cmd/newsd serve
 ```
 
-Open `/manage` to add an RSS feed, a Telegram channel or a subreddit. The scheduler starts
+Open `/manage` to add an RSS feed, a Telegram channel or a Mastodon tag. The scheduler starts
 it on save; the TOML seed is only the starting catalogue.
 
 During development run the API and Vite separately; Vite proxies `/api` to the backend:
@@ -127,7 +127,7 @@ Open `/manage` (or click the live chip and **Manage sources**). The page has the
 source health as the drawer plus the controls:
 
 - **Add source** picks a kind and renders its form from the server-side descriptor
-  (`GET /api/v1/kinds`): RSS URL, Telegram channels, subreddits, Mastodon tags, and so on.
+  (`GET /api/v1/kinds`): RSS URL, Telegram channels, Mastodon tags, and so on.
 - **Test source** fetches a few items without saving and shows the titles or the error.
 - **Edit** changes the label, group, interval and options. A changed interval or option
   restarts that source only; the other goroutines are untouched.
@@ -194,7 +194,6 @@ limit = 25
 | `mastodon` | `instance`, `tag` (a hashtag or `local`), `limit` | Public instance API, no token. |
 | `usgs` | `feed` (`significant`/`4.5`/`2.5`/`1.0`/`all`), `period` (`hour`/`day`/`week`), `limit` | Official GeoJSON. |
 | `github` | `repos`, `limit`, `prerelease = false` | Public releases API, unauthenticated (60 requests/hour per IP). |
-| `reddit` | `subreddits`, `sort`, `time`, `limit` | Public Reddit RSS through the global proxy. No OAuth app, no credentials; Reddit may answer 429 on bursts. |
 | `gdelt` | `query`, `timespan`, `max`, `language` | Free article index, but rate-limited to one request per five seconds; shipped disabled. |
 
 Any source can override the global proxy with `proxy` in its `[sources.options]`. This is
@@ -355,7 +354,7 @@ store also looks for the same normalized headline from a different source in the
 hours, which keeps one event from filling the stream twice without clustering.
 
 Story bodies are stored once, during ingestion: RSS `content:encoded`, Telegram post text,
-Mastodon HTML, Reddit selftext, HN comments and GitHub release notes. The sanitizer keeps a
+Mastodon HTML, HN comments and GitHub release notes. The sanitizer keeps a
 conservative set of tags and attributes, strips scripts/styles/iframes, resolves relative
 links, opens links in a new tab and rewrites every image through the local proxy. The feed
 payload stays small; the body is only returned by `/api/v1/story/{id}`.
@@ -373,13 +372,13 @@ is a keyset cursor, not an offset.
 - **Telegram** uses the public web preview. Channels without a preview, private channels and
   channels that restrict embedding will return nothing. Point `proxy` at a tunnel if
   `t.me` is blocked on your network; the same client fetches channel images.
-- **Reddit** uses its public RSS through the proxy, so there is no OAuth app to create.
-  Add a subreddit from `/manage`, or import the `.rss` URLs from Miniflux. Reddit can
-  answer 429; keep the interval at 15 minutes or higher and use the proxy.
+- **Reddit is not supported.** New Reddit Data API apps are issued only for approved
+  moderation use cases, and anonymous `.rss` returns 429 or an empty "Not Found" feed from
+  a server IP. A source that only sometimes answers is worse than no source.
 - **RSSHub** is an optional external service, not part of this binary. Add its routes as
   ordinary RSS sources and set `fetch.allow_private_networks = true`; loopback requests
   bypass the global proxy automatically. Keep RSSHub for YouTube and sites without a
-  native feed; Telegram and Reddit have native sources.
+  native feed; Telegram has a native source.
 - **OPML migration**: export subscriptions from Miniflux, import the file in `/manage`.
   Only subscriptions and categories are imported; old entries and read state stay in
   Miniflux. The old `feeds` list in `miniflux.nix` is not needed after the import.

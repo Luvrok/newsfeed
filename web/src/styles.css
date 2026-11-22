@@ -33,7 +33,6 @@
   --kind-usgs: #fabd2f;
   --kind-github: #a89984;
   --kind-gdelt: #8ec07c;
-  --kind-reddit: #fe8019;
 
   --header-h: 70px;
   --radius: 0;
@@ -67,7 +66,6 @@ html[data-theme='light'] {
   --kind-usgs: #b57614;
   --kind-github: #665c54;
   --kind-gdelt: #427b58;
-  --kind-reddit: #af3a03;
 }
 
 *,

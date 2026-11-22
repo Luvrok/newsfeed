@@ -41,7 +41,7 @@ type Descriptor struct {
 var descriptors = []Descriptor{
 	{
 		Kind: "rss", Title: "RSS / Atom",
-		Description: "Any feed, including RSSHub routes, Google News and Reddit .rss endpoints.",
+		Description: "Any feed, including RSSHub routes and Google News.",
 		Fields: []Field{
 			{Key: "url", Label: "Feed URL", Type: FieldText, Required: true, Help: "https://example.com/feed.xml or http://127.0.0.1:1200/..."},
 			{Key: "limit", Label: "Items per poll", Type: FieldNumber, Default: 25},
@@ -57,17 +57,6 @@ var descriptors = []Descriptor{
 			{Key: "channels", Label: "Channels", Type: FieldList, Required: true, Help: "Comma-separated names, e.g. tass_agency, bbcrussian"},
 			{Key: "limit", Label: "Posts per channel", Type: FieldNumber, Default: 20},
 			{Key: "skip", Label: "Skip phrases", Type: FieldList, Help: "Comma-separated phrases that mark sponsored posts."},
-			{Key: "proxy", Label: "Network", Type: FieldSelect, Options: []string{"", "direct"}},
-		},
-	},
-	{
-		Kind: "reddit", Title: "Reddit",
-		Description: "Public Reddit RSS through your proxy. No OAuth app needed.",
-		Fields: []Field{
-			{Key: "subreddits", Label: "Subreddits", Type: FieldList, Required: true, Help: "Comma-separated, e.g. worldnews, geopolitics"},
-			{Key: "sort", Label: "Sort", Type: FieldSelect, Options: []string{"hot", "new", "top", "rising"}, Default: "hot"},
-			{Key: "time", Label: "Top period", Type: FieldSelect, Options: []string{"hour", "day", "week", "month", "year", "all"}, Default: "day"},
-			{Key: "limit", Label: "Posts per subreddit", Type: FieldNumber, Default: 10},
 			{Key: "proxy", Label: "Network", Type: FieldSelect, Options: []string{"", "direct"}},
 		},
 	},
@@ -172,21 +161,6 @@ func ValidateOptions(kind string, opts Options, allowPrivate bool) error {
 		}
 		if len(channels) == 0 {
 			return fmt.Errorf("at least one channel is required")
-		}
-	case "reddit":
-		subs := opts.Strings("subreddits")
-		if len(subs) == 0 {
-			if s := opts.String("subreddit", ""); s != "" {
-				subs = []string{s}
-			}
-		}
-		if len(subs) == 0 {
-			return fmt.Errorf("at least one subreddit is required")
-		}
-		switch opts.String("sort", "hot") {
-		case "hot", "new", "top", "rising":
-		default:
-			return fmt.Errorf("sort must be hot, new, top or rising")
 		}
 	case "mastodon":
 		if opts.String("instance", "") == "" {

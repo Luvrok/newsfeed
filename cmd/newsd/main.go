@@ -94,6 +94,10 @@ func cmdServe(args []string, log *slog.Logger) int {
 		log.Error("seed file", "err", err)
 		return 1
 	}
+	if err := retireUnknownKinds(ctx, st, log); err != nil {
+		log.Error("retire unknown kinds", "err", err)
+		return 1
+	}
 	mgr := ingest.NewManager(cfg, st, log)
 	if err := mgr.Start(ctx); err != nil {
 		log.Error("start sources", "err", err)
@@ -131,6 +135,26 @@ func cmdServe(args []string, log *slog.Logger) int {
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
 	return 0
+}
+
+// retireUnknownKinds hides subscriptions whose kind this build no longer
+// ships. Removing a source kind from the code otherwise leaves rows that fail
+// on every poll with "unknown source kind" and paint the status panel red.
+func retireUnknownKinds(ctx context.Context, st *store.Store, log *slog.Logger) error {
+	sources, err := st.ListSources(ctx, false)
+	if err != nil {
+		return err
+	}
+	for _, src := range sources {
+		if source.Known(src.Kind) {
+			continue
+		}
+		if err := st.SoftDeleteSource(ctx, src.ID); err != nil {
+			return fmt.Errorf("retire %s: %w", src.ID, err)
+		}
+		log.Info("retired a source whose kind is gone", "source", src.ID, "kind", src.Kind)
+	}
+	return nil
 }
 
 func seedFromFile(ctx context.Context, cfg *config.Config, st *store.Store, log *slog.Logger) error {
@@ -196,6 +220,10 @@ func cmdFetch(args []string, log *slog.Logger) int {
 	}
 	if err := seedFromFile(ctx, cfg, st, log); err != nil {
 		log.Error("seed file", "err", err)
+		return 1
+	}
+	if err := retireUnknownKinds(ctx, st, log); err != nil {
+		log.Error("retire unknown kinds", "err", err)
 		return 1
 	}
 	sources, err := st.ListSources(ctx, false)

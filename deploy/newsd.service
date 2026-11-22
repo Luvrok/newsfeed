@@ -10,7 +10,7 @@ User=dispatch
 Group=dispatch
 WorkingDirectory=/opt/dispatch
 Environment=NEWSFEED_CONFIG=/opt/dispatch/config/newsfeed.toml
-# Optional: REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, HTTPS_PROXY, etc.
+# Optional: HTTPS_PROXY, NEWSFEED_PROXY, DISPATCH_WEB_DIR, etc.
 EnvironmentFile=-/etc/newsd.env
 ExecStart=/opt/dispatch/bin/newsd serve
 Restart=on-failure
