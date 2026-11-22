@@ -1,11 +1,11 @@
 # The default subscription catalogue.
 #
 # It starts as the Miniflux list and adds the general feeds the project ships
-# with: agencies, tech, Mastodon tags and official APIs. The file is applied on
-# every start, but only inserts rows that are missing: an existing source is
-# never overwritten, a paused one stays paused, and a deleted one stays
-# deleted. After the first run the SQLite table is the source of truth, so edit
-# sources in /manage rather than here.
+# with: agencies, US politics, geopolitics, gaming, film, Mastodon tags and
+# official APIs. The file is applied on every start, but only inserts rows that
+# are missing: an existing source is never overwritten, a paused one stays
+# paused, and a deleted one stays deleted. After the first run the SQLite table
+# is the source of truth, so edit sources in /manage rather than here.
 
 # ---------------------------------------------------------------------------
 # Breaking
@@ -34,6 +34,28 @@ interval = "5m"
 channels = ["ateobreaking"]
 limit = 20
 skip = ["спонсор показа", "Durev VPN", "erid"]
+
+[[sources]]
+id = "bbc-top"
+kind = "rss"
+label = "BBC News"
+site = "https://www.bbc.com/news"
+group = "Breaking"
+interval = "5m"
+[sources.options]
+url = "https://feeds.bbci.co.uk/news/rss.xml"
+limit = 30
+
+[[sources]]
+id = "sky-world"
+kind = "rss"
+label = "Sky News World"
+site = "https://news.sky.com/world"
+group = "Breaking"
+interval = "10m"
+[sources.options]
+url = "https://feeds.skynews.com/feeds/rss/world.xml"
+limit = 15
 
 # ---------------------------------------------------------------------------
 # World
@@ -141,6 +163,223 @@ enabled = false
 query = "climate OR election OR conflict"
 timespan = "1d"
 max = 40
+
+# ---------------------------------------------------------------------------
+# US Politics
+# ---------------------------------------------------------------------------
+
+[[sources]]
+id = "us-thehill"
+kind = "rss"
+label = "The Hill"
+site = "https://thehill.com"
+group = "US Politics"
+interval = "10m"
+[sources.options]
+url = "https://thehill.com/feed/"
+limit = 25
+
+[[sources]]
+id = "us-axios"
+kind = "rss"
+label = "Axios"
+site = "https://www.axios.com"
+group = "US Politics"
+interval = "10m"
+[sources.options]
+url = "https://api.axios.com/feed/"
+limit = 25
+
+[[sources]]
+id = "us-npr-politics"
+kind = "rss"
+label = "NPR Politics"
+site = "https://www.npr.org/sections/politics/"
+group = "US Politics"
+interval = "15m"
+[sources.options]
+url = "https://feeds.npr.org/1014/rss.xml"
+limit = 20
+
+[[sources]]
+id = "us-nyt-politics"
+kind = "rss"
+label = "NYT Politics"
+site = "https://www.nytimes.com/section/politics"
+group = "US Politics"
+interval = "10m"
+[sources.options]
+url = "https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml"
+limit = 25
+
+[[sources]]
+id = "us-abc-politics"
+kind = "rss"
+label = "ABC News Politics"
+site = "https://abcnews.go.com/politics"
+group = "US Politics"
+interval = "10m"
+[sources.options]
+url = "https://abcnews.go.com/abcnews/politicsheadlines"
+limit = 25
+
+[[sources]]
+id = "us-cbs-politics"
+kind = "rss"
+label = "CBS News Politics"
+site = "https://www.cbsnews.com/politics/"
+group = "US Politics"
+interval = "10m"
+[sources.options]
+url = "https://www.cbsnews.com/latest/rss/politics"
+limit = 25
+
+[[sources]]
+id = "us-fox-politics"
+kind = "rss"
+label = "Fox News Politics"
+site = "https://www.foxnews.com/politics"
+group = "US Politics"
+interval = "10m"
+[sources.options]
+url = "https://feeds.foxnews.com/foxnews/politics"
+limit = 25
+
+[[sources]]
+id = "us-propublica"
+kind = "rss"
+label = "ProPublica"
+site = "https://www.propublica.org"
+group = "US Politics"
+interval = "30m"
+[sources.options]
+url = "https://www.propublica.org/feeds/propublica/main"
+limit = 20
+
+# ---------------------------------------------------------------------------
+# Geopolitics
+# ---------------------------------------------------------------------------
+
+[[sources]]
+id = "geo-warontherocks"
+kind = "rss"
+label = "War on the Rocks"
+site = "https://warontherocks.com"
+group = "Geopolitics"
+interval = "30m"
+[sources.options]
+url = "https://warontherocks.com/feed/"
+limit = 20
+
+[[sources]]
+id = "geo-foreignpolicy"
+kind = "rss"
+label = "Foreign Policy"
+site = "https://foreignpolicy.com"
+group = "Geopolitics"
+interval = "30m"
+[sources.options]
+url = "https://foreignpolicy.com/feed/"
+limit = 20
+
+[[sources]]
+id = "geo-foreignaffairs"
+kind = "rss"
+label = "Foreign Affairs"
+site = "https://www.foreignaffairs.com"
+group = "Geopolitics"
+interval = "30m"
+[sources.options]
+url = "https://www.foreignaffairs.com/rss.xml"
+limit = 20
+
+[[sources]]
+id = "geo-diplomat"
+kind = "rss"
+label = "The Diplomat"
+site = "https://thediplomat.com"
+group = "Geopolitics"
+interval = "30m"
+[sources.options]
+url = "https://thediplomat.com/feed/"
+limit = 20
+
+[[sources]]
+id = "geo-atlanticcouncil"
+kind = "rss"
+label = "Atlantic Council"
+site = "https://www.atlanticcouncil.org"
+group = "Geopolitics"
+interval = "30m"
+[sources.options]
+url = "https://www.atlanticcouncil.org/feed/"
+limit = 20
+
+[[sources]]
+id = "geo-crisisgroup"
+kind = "rss"
+label = "Crisis Group"
+site = "https://www.crisisgroup.org"
+group = "Geopolitics"
+interval = "1h"
+[sources.options]
+url = "https://www.crisisgroup.org/rss"
+limit = 15
+
+[[sources]]
+id = "geo-ecfr"
+kind = "rss"
+label = "ECFR"
+site = "https://ecfr.eu"
+group = "Geopolitics"
+interval = "1h"
+[sources.options]
+url = "https://ecfr.eu/feed/"
+limit = 15
+
+[[sources]]
+id = "geo-almonitor"
+kind = "rss"
+label = "Al-Monitor"
+site = "https://www.al-monitor.com"
+group = "Geopolitics"
+interval = "30m"
+[sources.options]
+url = "https://www.al-monitor.com/rss"
+limit = 20
+
+[[sources]]
+id = "geo-moscowtimes"
+kind = "rss"
+label = "The Moscow Times"
+site = "https://www.themoscowtimes.com"
+group = "Geopolitics"
+interval = "30m"
+[sources.options]
+url = "https://www.themoscowtimes.com/rss/news"
+limit = 25
+
+[[sources]]
+id = "geo-politico-eu"
+kind = "rss"
+label = "Politico Europe"
+site = "https://www.politico.eu"
+group = "Geopolitics"
+interval = "30m"
+[sources.options]
+url = "https://www.politico.eu/feed/"
+limit = 20
+
+[[sources]]
+id = "geo-bellingcat"
+kind = "rss"
+label = "Bellingcat"
+site = "https://www.bellingcat.com"
+group = "Geopolitics"
+interval = "2h"
+[sources.options]
+url = "https://bellingcat.com/feed/"
+limit = 15
 
 # ---------------------------------------------------------------------------
 # Russia
@@ -447,6 +686,169 @@ interval = "30m"
 [sources.options]
 repos = ["ollama/ollama", "ggml-org/llama.cpp", "astral-sh/uv", "n8n-io/n8n"]
 limit = 2
+
+# ---------------------------------------------------------------------------
+# Gaming
+# ---------------------------------------------------------------------------
+
+[[sources]]
+id = "game-eurogamer"
+kind = "rss"
+label = "Eurogamer"
+site = "https://www.eurogamer.net"
+group = "Gaming"
+interval = "20m"
+[sources.options]
+url = "https://www.eurogamer.net/feed"
+limit = 25
+
+[[sources]]
+id = "game-pcgamer"
+kind = "rss"
+label = "PC Gamer"
+site = "https://www.pcgamer.com"
+group = "Gaming"
+interval = "20m"
+[sources.options]
+url = "https://www.pcgamer.com/rss/"
+limit = 25
+
+[[sources]]
+id = "game-rps"
+kind = "rss"
+label = "Rock Paper Shotgun"
+site = "https://www.rockpapershotgun.com"
+group = "Gaming"
+interval = "20m"
+[sources.options]
+url = "https://www.rockpapershotgun.com/feed"
+limit = 25
+
+[[sources]]
+id = "game-polygon"
+kind = "rss"
+label = "Polygon"
+site = "https://www.polygon.com"
+group = "Gaming"
+interval = "20m"
+[sources.options]
+url = "https://www.polygon.com/rss/index.xml"
+limit = 20
+
+[[sources]]
+id = "game-industry"
+kind = "rss"
+label = "GamesIndustry.biz"
+site = "https://www.gamesindustry.biz"
+group = "Gaming"
+interval = "30m"
+[sources.options]
+url = "https://www.gamesindustry.biz/feed"
+limit = 20
+
+[[sources]]
+id = "game-ign"
+kind = "rss"
+label = "IGN"
+site = "https://www.ign.com"
+group = "Gaming"
+interval = "20m"
+[sources.options]
+url = "https://feeds.ign.com/ign/all"
+limit = 20
+
+[[sources]]
+id = "game-dtf"
+kind = "rss"
+label = "DTF"
+site = "https://dtf.ru"
+group = "Gaming"
+interval = "30m"
+[sources.options]
+url = "https://dtf.ru/rss/all"
+limit = 20
+proxy = "direct"
+
+# ---------------------------------------------------------------------------
+# Film
+# ---------------------------------------------------------------------------
+
+[[sources]]
+id = "film-variety"
+kind = "rss"
+label = "Variety"
+site = "https://variety.com"
+group = "Film"
+interval = "30m"
+[sources.options]
+url = "https://variety.com/feed/"
+limit = 20
+
+[[sources]]
+id = "film-thr"
+kind = "rss"
+label = "The Hollywood Reporter"
+site = "https://www.hollywoodreporter.com"
+group = "Film"
+interval = "30m"
+[sources.options]
+url = "https://www.hollywoodreporter.com/feed/"
+limit = 20
+
+[[sources]]
+id = "film-deadline"
+kind = "rss"
+label = "Deadline"
+site = "https://deadline.com"
+group = "Film"
+interval = "30m"
+[sources.options]
+url = "https://deadline.com/feed/"
+limit = 20
+
+[[sources]]
+id = "film-indiewire"
+kind = "rss"
+label = "IndieWire"
+site = "https://www.indiewire.com"
+group = "Film"
+interval = "30m"
+[sources.options]
+url = "https://www.indiewire.com/feed/"
+limit = 20
+
+[[sources]]
+id = "film-collider"
+kind = "rss"
+label = "Collider"
+site = "https://collider.com"
+group = "Film"
+interval = "30m"
+[sources.options]
+url = "https://collider.com/feed/"
+limit = 20
+
+[[sources]]
+id = "film-slashfilm"
+kind = "rss"
+label = "/Film"
+site = "https://www.slashfilm.com"
+group = "Film"
+interval = "30m"
+[sources.options]
+url = "https://www.slashfilm.com/feed/"
+limit = 20
+
+[[sources]]
+id = "film-thefilmstage"
+kind = "rss"
+label = "The Film Stage"
+site = "https://thefilmstage.com"
+group = "Film"
+interval = "1h"
+[sources.options]
+url = "https://thefilmstage.com/feed/"
+limit = 15
 
 # ---------------------------------------------------------------------------
 # Social

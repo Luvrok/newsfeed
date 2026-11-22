@@ -53,8 +53,8 @@ go run ./cmd/newsd serve
 ```
 
 Open `/manage` to add an RSS feed, a Telegram channel or a Mastodon tag. The scheduler starts
-it on save; the TOML seed is only the starting catalogue (42 sources: the old Miniflux list
-plus agencies, tech and Mastodon).
+it on save; the TOML seed is only the starting catalogue (77 sources: the old Miniflux list
+plus agencies, US politics, geopolitics, gaming, film and Mastodon).
 
 During development run the API and Vite separately; Vite proxies `/api` to the backend:
 
