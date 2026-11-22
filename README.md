@@ -12,7 +12,8 @@ sources (one goroutine each)  ->  SQLite  ->  /api/v1/feed  ->  React reader
 ## Features
 
 - **Subscriptions in the database.** Add, edit, pause and delete sources from the web UI.
-  The TOML file is a first-run seed and global settings, not the runtime truth.
+  The TOML file holds global settings; the catalogue in `config/seed.toml` only tops the
+  database up with missing rows.
 - **Hot source lifecycle.** A new source gets its own goroutine, interval, jitter and
   backoff immediately; no restart and no config edit. The database is the source of truth.
 - **One goroutine per source**, its own interval, jitter and exponential backoff on errors.
@@ -52,7 +53,8 @@ go run ./cmd/newsd serve
 ```
 
 Open `/manage` to add an RSS feed, a Telegram channel or a Mastodon tag. The scheduler starts
-it on save; the TOML seed is only the starting catalogue.
+it on save; the TOML seed is only the starting catalogue (42 sources: the old Miniflux list
+plus agencies, tech and Mastodon).
 
 During development run the API and Vite separately; Vite proxies `/api` to the backend:
 
@@ -144,12 +146,14 @@ descriptor and a flake rebuild.
 
 ## Configuration
 
-[`config/newsfeed.toml`](config/newsfeed.toml) holds global settings and a first-run seed.
+[`config/newsfeed.toml`](config/newsfeed.toml) holds global settings;
+[`config/seed.toml`](config/seed.toml) holds the starting catalogue.
 After the first start, the SQLite `sources` table is the runtime source of truth: editing
-or deleting a source in `/manage` survives restarts. The seed only inserts missing rows and
-backfills legacy rows that have no options yet; it never deletes and never overwrites a
-source edited in the UI. Source instances live in the database, so the TOML list can be
-emptied after the import.
+or deleting a source in `/manage` survives restarts. The seed is applied on every start but
+only inserts rows that are missing and backfills legacy rows without options: it never
+deletes, never overwrites a source edited in the UI, leaves a paused source paused and a
+deleted one deleted. Adding a feed to the seed therefore reaches a running install on the
+next restart, and the seed can be emptied once the catalogue lives in the database.
 
 ```toml
 [server]

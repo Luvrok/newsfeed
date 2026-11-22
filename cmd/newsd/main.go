@@ -157,22 +157,40 @@ func retireUnknownKinds(ctx context.Context, st *store.Store, log *slog.Logger) 
 	return nil
 }
 
+// seedFromFile applies the catalogue on every start. SeedSources inserts only
+// the rows that are missing and backfills legacy rows without options, so a
+// source that already exists is never overwritten, a paused one stays paused
+// and a deleted one stays deleted. Adding a feed to the seed therefore reaches
+// a running install on the next restart.
 func seedFromFile(ctx context.Context, cfg *config.Config, st *store.Store, log *slog.Logger) error {
 	if cfg.Database.SeedFile == "" {
 		return nil
-	}
-	count, err := st.CountSources(ctx)
-	if err != nil || count > 0 {
-		return err
 	}
 	seedCfg, err := config.Load(cfg.Database.SeedFile)
 	if err != nil {
 		return err
 	}
+	before, err := st.ListSources(ctx, true)
+	if err != nil {
+		return err
+	}
+	known := make(map[string]bool, len(before))
+	for _, src := range before {
+		known[src.ID] = true
+	}
 	if err := st.SeedSources(ctx, seedSources(seedCfg)); err != nil {
 		return err
 	}
-	log.Info("seeded sources from file", "file", cfg.Database.SeedFile, "sources", len(seedCfg.Sources))
+	added := 0
+	for _, src := range seedCfg.Sources {
+		if !known[src.ID] {
+			added++
+		}
+	}
+	if added > 0 {
+		log.Info("seed added subscriptions", "file", cfg.Database.SeedFile,
+			"added", added, "catalogue", len(seedCfg.Sources))
+	}
 	return nil
 }
 
